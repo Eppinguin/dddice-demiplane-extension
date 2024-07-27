@@ -18,10 +18,8 @@ const log = createLogger('demiplane');
 log.info('DDDICE Demiplane');
 console.log('DDDICE Demiplane');
 
-const FADE_TIMEOUT = 100;
 let dddice: ThreeDDice;
 let canvasElement: HTMLCanvasElement;
-const DEFAULT_THEME = 'dddice-bees';
 
 function injectScript(filePath: string) {
   const script = document.createElement('script');
@@ -41,7 +39,7 @@ async function handleRollButtonClick() {
   const parsedResults = new Set<string>();
 
   // Fetch the theme
-  const [theme] = await Promise.all([getStorage('theme')]);
+  const [theme,hopeTheme,fearTheme] = await Promise.all([getStorage('theme'),getStorage('hopeTheme'),getStorage('fearTheme')]);
 
   // Function to parse dice values and log them
   function parseDiceValues() {
@@ -72,7 +70,7 @@ async function handleRollButtonClick() {
       diceArray.push({
         type: label === 'Disadvantage' ? 'mod' : type,
         value: label === 'Disadvantage' ? -value : value,
-        theme: label==='Hope' ? 'greed-n\'-riches-lm86crmx' : theme.id,
+        theme: label==='Hope' ? hopeTheme.id : label==='Fear'? fearTheme.id : theme.id,
         label: label
       });
     });
@@ -183,7 +181,6 @@ async function initializeSDK() {
         document.body.appendChild(canvasElement);
         try {
           dddice = new ThreeDDice().initialize(canvasElement, apiKey, undefined, 'Demiplane');
-          // dddice.on(ThreeDDiceRollEvent.RollFinished, (roll: IRoll) => updateChat(roll));
           dddice.start();
           if (room) {
             dddice.connect(room.slug);
@@ -206,9 +203,6 @@ async function initializeSDK() {
           console.error(e);
           notify(`${e.response?.data?.data?.message ?? e}`);
         }
-        // dddice.api.listen(ThreeDDiceRollEvent.RollCreated, (roll: IRoll) =>
-        //   setTimeout(() => updateChat(roll), 1500),
-        // );
       }
     } else {
       log.debug('no api key');

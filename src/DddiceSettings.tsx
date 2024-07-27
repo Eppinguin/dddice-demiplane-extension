@@ -30,6 +30,8 @@ export interface IStorage {
   themes?: ITheme[];
   rooms?: IRoom[];
   renderMode: boolean;
+  hopeTheme?: ITheme; // New property for Hope theme
+  fearTheme?: ITheme; // New property for Fear theme
 }
 
 export const DefaultStorage: IStorage = {
@@ -39,6 +41,8 @@ export const DefaultStorage: IStorage = {
   themes: undefined,
   rooms: undefined,
   renderMode: true,
+  hopeTheme: undefined, // New property for Hope theme
+  fearTheme: undefined, // New property for Fear theme
 };
 
 interface DddiceSettingsProps {
@@ -113,13 +117,15 @@ const DddiceSettings = (props: DddiceSettingsProps) => {
 
   useEffect(() => {
     async function initStorage() {
-      const [apiKey, room, theme, rooms, themes, renderMode] = await Promise.all([
+      const [apiKey, room, theme, rooms, themes, renderMode, hopeTheme, fearTheme] = await Promise.all([
         storageProvider.getStorage('apiKey'),
         storageProvider.getStorage('room'),
         storageProvider.getStorage('theme'),
         storageProvider.getStorage('rooms'),
         storageProvider.getStorage('themes'),
         storageProvider.getStorage('render mode'),
+        storageProvider.getStorage('hopeTheme'), // Load Hope theme
+        storageProvider.getStorage('fearTheme'), // Load Fear theme
       ]);
 
       setState((storage: IStorage) => ({
@@ -130,6 +136,8 @@ const DddiceSettings = (props: DddiceSettingsProps) => {
         rooms,
         themes,
         renderMode: renderMode === undefined ? true : renderMode,
+        hopeTheme, // Set Hope theme
+        fearTheme, // Set Fear theme
       }));
     }
 
@@ -154,6 +162,34 @@ const DddiceSettings = (props: DddiceSettingsProps) => {
       init();
     }
   }, [isConnected]);
+
+  const onChangeHopeTheme = useCallback((theme: ITheme) => {
+    setState((storage: IStorage) => ({
+      ...storage,
+      hopeTheme: theme,
+    }));
+
+    if (theme) {
+      storageProvider.setStorage({ hopeTheme: theme });
+      preloadTheme(theme);
+    }
+
+    ReactTooltip.hide();
+  }, []);
+
+  const onChangeFearTheme = useCallback((theme: ITheme) => {
+    setState((storage: IStorage) => ({
+      ...storage,
+      fearTheme: theme,
+    }));
+
+    if (theme) {
+      storageProvider.setStorage({ fearTheme: theme });
+      preloadTheme(theme);
+    }
+
+    ReactTooltip.hide();
+  }, []);
 
   const refreshThemes = async () => {
     let themes: ITheme[] = [];
@@ -406,8 +442,8 @@ const DddiceSettings = (props: DddiceSettingsProps) => {
                 className="text-gray-700 text-xxs mr-auto cursor-pointer"
                 onClick={() => setIsEnterApiKey(false)}
               >
-                <Back className="flex h-4 w-4 m-auto" data-tip="Back" data-place="right" />
-              </span>
+              <Back className="flex h-4 w-4 m-auto" data-tip="Back" data-place="right" />
+            </span>
             ) : (
               <a
                 className="!text-gray-700 text-xxs mr-auto"
@@ -418,8 +454,8 @@ const DddiceSettings = (props: DddiceSettingsProps) => {
               </a>
             )}
             <span className="text-gray-700 text-xxs ml-auto cursor-pointer" onClick={onSignOut}>
-              <LogOut className="flex h-4 w-4 m-auto" data-tip="Logout" data-place="left" />
-            </span>
+            <LogOut className="flex h-4 w-4 m-auto" data-tip="Logout" data-place="left" />
+          </span>
           </div>
         </>
       )}
@@ -480,6 +516,26 @@ const DddiceSettings = (props: DddiceSettingsProps) => {
                       disabled={!permissionProvider.canChangeRoom()}
                     />
                     <Theme theme={state.theme} onSwitchTheme={onSwitchTheme} />
+                    {!state.hopeTheme ? (
+                      <ThemeSelection
+                        themes={state.themes}
+                        onSelectTheme={onChangeHopeTheme}
+                        onConnectAccount={() => setIsEnterApiKey(true)}
+                        onRefreshThemes={refreshThemes}
+                      />
+                    ) : (
+                      <Theme theme={state.hopeTheme} onSwitchTheme={() => onChangeHopeTheme(undefined)} />
+                    )}
+                    {!state.fearTheme ? (
+                      <ThemeSelection
+                        themes={state.themes}
+                        onSelectTheme={onChangeFearTheme}
+                        onConnectAccount={() => setIsEnterApiKey(true)}
+                        onRefreshThemes={refreshThemes}
+                      />
+                    ) : (
+                      <Theme theme={state.fearTheme} onSwitchTheme={() => onChangeFearTheme(undefined)} />
+                    )}
                     <div className="py-3 flex items-center justify-between">
                       <span className="text-lg font-bold text-gray-300 flex-1">Render Dice</span>
                       <div>
@@ -502,9 +558,9 @@ const DddiceSettings = (props: DddiceSettingsProps) => {
       )}
       {!isConnected && (
         <div className="flex justify-center text-gray-700 mt-4">
-          <span className="text-center text-gray-300">
-            Not connected. Please navigate to a supported VTT.
-          </span>
+        <span className="text-center text-gray-300">
+          Not connected. Please navigate to a supported VTT.
+        </span>
         </div>
       )}
       <p className="border-t border-gray-800 mt-4 pt-4 text-gray-700 text-xxs text-center">
