@@ -59,7 +59,7 @@
       "all_frames": true
     }
   ],
-  "permissions": ["webRequest", "activeTab", "tabs", "storage"],
+  "permissions": ["tabs", "storage"],
   "web_accessible_resources": [
     {
       "resources": ["../dndbeyond.css", "../assets/dddice-32x32.png"],
@@ -78,8 +78,8 @@
       "matches": ["https://pathbuilder2e.com/*"]
     },
     {
-      "resources": ["../demiplane.css", "../assets/dddice-48x48.png"],
-      "matches": ["https://*.demiplane.com/nexus/daggerheart/*"]
+      "resources": ["../demiplane.css"],
+      "matches": ["https://app.demiplane.com/*"]
     }
   ]
 }
