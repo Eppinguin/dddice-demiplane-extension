@@ -36,6 +36,8 @@ export default class SdkBridge {
           resolve('Pathbuilder 2e');
         } else if (/tabyltop.com/.test(tab.url)) {
           resolve('Tabyltop');
+        } else if (/demiplane.com/.test(tab.url)) {
+          resolve('Demiplane');
         }
       }),
     );

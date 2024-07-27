@@ -79,11 +79,23 @@
         "*://*.tabyltop.com/*"
       ],
       "run_at": "document_idle"
+    },
+    {
+      "js": [
+        "../demiplane.tsx"
+      ],
+      "matches": [
+        "*://*.demiplane.com/*"
+      ],
+      "run_at": "document_idle",
+      "all_frames": true
     }
   ],
   "permissions": [
-    "storage",
-    "tabs"
+    "webRequest",
+    "activeTab",
+    "tabs",
+    "storage"
   ],
   "web_accessible_resources": [
     {
@@ -120,6 +132,25 @@
       ],
       "matches": [
         "https://pathbuilder2e.com/*"
+      ]
+    },
+    {
+      "resources": [
+        "../demiplane.css",
+        "../demiplane.tsx",
+        "../demiplane_inject.ts",
+        "../assets/dddice-48x48.png"
+      ],
+      "matches": [
+        "https://*.demiplane.com/*"
+      ]
+    },
+    {
+      "resources": [
+        "../demiplane_inject.ts"
+      ],
+      "matches": [
+        "https://*.demiplane.com/*"
       ]
     }
   ]
