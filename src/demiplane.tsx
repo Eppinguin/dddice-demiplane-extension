@@ -1,9 +1,7 @@
 /** @format */
-import browser from 'webextension-polyfill';
 import createLogger from './log';
 import { getStorage, setStorage } from './storage';
 import { IRoll, ThreeDDiceRollEvent, ThreeDDice, ITheme, ThreeDDiceAPI, IUser } from 'dddice-js';
-import imageLogo from 'url:./assets/dddice-32x32.png';
 import notify from './utils/notify';
 import { Notify } from 'notiflix/build/notiflix-notify-aio';
 
@@ -16,36 +14,33 @@ Notify.init({
 
 const log = createLogger('demiplane');
 log.info('DDDICE Demiplane');
-console.log('DDDICE Demiplane');
 
 let dddice: ThreeDDice;
 let canvasElement: HTMLCanvasElement;
 let user: IUser;
 
 // Select the button element
-const rollButton = document.querySelector('.dice-roll-button--roll');
+// const rollButton = document.querySelector('.dice-roll-button--roll');
 
 // Function to handle the button press
 async function handleRollButtonClick() {
-  console.log('Roll button pressed');
   const parsedResults = new Set<string>();
 
   // Fetch the theme
   const [theme, hopeTheme, fearTheme] = await Promise.all([
     getStorage('theme'),
     getStorage('hopeTheme'),
-    getStorage('fearTheme')
+    getStorage('fearTheme'),
   ]);
 
   const hopeThemeId = hopeTheme ? hopeTheme.id : null;
   const fearThemeId = fearTheme ? fearTheme.id : null;
 
-// Use hopeThemeId and fearThemeId in your logic
+  // Use hopeThemeId and fearThemeId in your logic
   // Function to parse dice values and log them
   function parseDiceValues() {
     const diceContainer = document.querySelector('.dice-history-roll-result-container');
     if (!diceContainer) {
-      console.error('Dice container not found.');
       return;
     }
 
@@ -56,7 +51,9 @@ async function handleRollButtonClick() {
       const valueElement = diceElement.querySelector('.history-item-result__label');
       const value = parseInt(valueElement.textContent, 10);
       const label = diceElement.querySelector('img').alt;
-      const typeClass = Array.from(diceElement.classList).find(cls => cls.startsWith('history-item-result__die--'));
+      const typeClass = Array.from(diceElement.classList).find(cls =>
+        cls.startsWith('history-item-result__die--'),
+      );
       const type = (() => {
         if (label === 'Hope' || label === 'Fear') {
           return 'd12';
@@ -70,8 +67,8 @@ async function handleRollButtonClick() {
       diceArray.push({
         type: label === 'Disadvantage' ? 'mod' : type,
         value: label === 'Disadvantage' ? -value : value,
-        theme: label==='Hope' ? hopeThemeId : label==='Fear'? fearThemeId : theme.id,
-        label: label
+        theme: label === 'Hope' ? hopeThemeId : label === 'Fear' ? fearThemeId : theme.id,
+        label: label,
       });
     });
 
@@ -82,7 +79,7 @@ async function handleRollButtonClick() {
         diceArray.push({
           type: 'mod',
           theme: theme.id,
-          value: modifierValue
+          value: modifierValue,
         });
       }
     }
@@ -97,8 +94,8 @@ async function handleRollButtonClick() {
   }
 
   // Create a MutationObserver to watch for changes in the DOM
-  const observer = new MutationObserver((mutations) => {
-    mutations.forEach((mutation) => {
+  const observer = new MutationObserver(mutations => {
+    mutations.forEach(mutation => {
       if (mutation.addedNodes.length) {
         parseDiceValues();
       }
@@ -110,14 +107,13 @@ async function handleRollButtonClick() {
 }
 
 // Create a MutationObserver to watch for changes in the DOM
-const observer = new MutationObserver((mutations) => {
-  mutations.forEach((mutation) => {
-    mutation.addedNodes.forEach((node) => {
+const observer = new MutationObserver(mutations => {
+  mutations.forEach(mutation => {
+    mutation.addedNodes.forEach(node => {
       if (node instanceof HTMLElement && node.querySelector('.dice-roll-button--roll')) {
         const rollButton = node.querySelector('.dice-roll-button--roll');
         if (rollButton) {
           rollButton.addEventListener('click', handleRollButtonClick);
-          console.log('Roll button found and event listener added');
         }
       }
     });
@@ -163,7 +159,9 @@ async function updateUsername() {
     );
   } else {
     try {
-      const characterNameElement = document.querySelector('.MuiGrid-root.MuiGrid-item.text-block.character-name.css-1ipveys .text-block__text.MuiBox-root.css-1dyfylb');
+      const characterNameElement = document.querySelector(
+        '.MuiGrid-root.MuiGrid-item.text-block.character-name.css-1ipveys .text-block__text.MuiBox-root.css-1dyfylb',
+      );
       const characterName = characterNameElement ? characterNameElement.textContent : null;
       if (!user) {
         user = (await dddice.api.user.get()).data;
@@ -178,7 +176,7 @@ async function updateUsername() {
           username: characterName,
         });
       }
-    }catch (e) {
+    } catch (e) {
       console.error(e);
       notify(`${e.response?.data?.data?.message ?? e}`);
     }

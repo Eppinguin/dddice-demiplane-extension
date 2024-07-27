@@ -117,16 +117,17 @@ const DddiceSettings = (props: DddiceSettingsProps) => {
 
   useEffect(() => {
     async function initStorage() {
-      const [apiKey, room, theme, rooms, themes, renderMode, hopeTheme, fearTheme] = await Promise.all([
-        storageProvider.getStorage('apiKey'),
-        storageProvider.getStorage('room'),
-        storageProvider.getStorage('theme'),
-        storageProvider.getStorage('rooms'),
-        storageProvider.getStorage('themes'),
-        storageProvider.getStorage('render mode'),
-        storageProvider.getStorage('hopeTheme'), // Load Hope theme
-        storageProvider.getStorage('fearTheme'), // Load Fear theme
-      ]);
+      const [apiKey, room, theme, rooms, themes, renderMode, hopeTheme, fearTheme] =
+        await Promise.all([
+          storageProvider.getStorage('apiKey'),
+          storageProvider.getStorage('room'),
+          storageProvider.getStorage('theme'),
+          storageProvider.getStorage('rooms'),
+          storageProvider.getStorage('themes'),
+          storageProvider.getStorage('render mode'),
+          storageProvider.getStorage('hopeTheme'), // Load Hope theme
+          storageProvider.getStorage('fearTheme'), // Load Fear theme
+        ]);
 
       setState((storage: IStorage) => ({
         ...storage,
@@ -442,8 +443,8 @@ const DddiceSettings = (props: DddiceSettingsProps) => {
                 className="text-gray-700 text-xxs mr-auto cursor-pointer"
                 onClick={() => setIsEnterApiKey(false)}
               >
-              <Back className="flex h-4 w-4 m-auto" data-tip="Back" data-place="right" />
-            </span>
+                <Back className="flex h-4 w-4 m-auto" data-tip="Back" data-place="right" />
+              </span>
             ) : (
               <a
                 className="!text-gray-700 text-xxs mr-auto"
@@ -454,8 +455,8 @@ const DddiceSettings = (props: DddiceSettingsProps) => {
               </a>
             )}
             <span className="text-gray-700 text-xxs ml-auto cursor-pointer" onClick={onSignOut}>
-            <LogOut className="flex h-4 w-4 m-auto" data-tip="Logout" data-place="left" />
-          </span>
+              <LogOut className="flex h-4 w-4 m-auto" data-tip="Logout" data-place="left" />
+            </span>
           </div>
         </>
       )}
@@ -524,7 +525,10 @@ const DddiceSettings = (props: DddiceSettingsProps) => {
                         onRefreshThemes={refreshThemes}
                       />
                     ) : (
-                      <Theme theme={state.hopeTheme} onSwitchTheme={() => onChangeHopeTheme(undefined)} />
+                      <Theme
+                        theme={state.hopeTheme}
+                        onSwitchTheme={() => onChangeHopeTheme(undefined)}
+                      />
                     )}
                     {!state.fearTheme ? (
                       <ThemeSelection
@@ -534,7 +538,10 @@ const DddiceSettings = (props: DddiceSettingsProps) => {
                         onRefreshThemes={refreshThemes}
                       />
                     ) : (
-                      <Theme theme={state.fearTheme} onSwitchTheme={() => onChangeFearTheme(undefined)} />
+                      <Theme
+                        theme={state.fearTheme}
+                        onSwitchTheme={() => onChangeFearTheme(undefined)}
+                      />
                     )}
                     <div className="py-3 flex items-center justify-between">
                       <span className="text-lg font-bold text-gray-300 flex-1">Render Dice</span>
@@ -558,9 +565,9 @@ const DddiceSettings = (props: DddiceSettingsProps) => {
       )}
       {!isConnected && (
         <div className="flex justify-center text-gray-700 mt-4">
-        <span className="text-center text-gray-300">
-          Not connected. Please navigate to a supported VTT.
-        </span>
+          <span className="text-center text-gray-300">
+            Not connected. Please navigate to a supported VTT.
+          </span>
         </div>
       )}
       <p className="border-t border-gray-800 mt-4 pt-4 text-gray-700 text-xxs text-center">
