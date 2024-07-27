@@ -31,168 +31,109 @@ function injectScript(filePath: string) {
   };
   (document.head || document.documentElement).appendChild(script);
 }
-injectScript('up_/demiplane_inject.js');
+// injectScript('up_/demiplane_inject.js');
+// Select the button element
+const rollButton = document.querySelector('.dice-roll-button--roll');
 
-window.addEventListener('diceRollRequest', (event: CustomEvent) => {
-  const responseData = event.detail;
-  console.log('Dice roll request:', responseData);
-  if (responseData && responseData.url) {
-    sendRollRequest(rollToDDDice(responseData.url.split('dice-roll?roll=')[1]));
-  } else {
-    console.error('Received null or invalid responseData:', responseData);
+// Function to handle the button press
+async function handleRollButtonClick() {
+  console.log('Roll button pressed');
+  const parsedResults = new Set<string>();
+
+  // Fetch the theme
+  const [theme] = await Promise.all([getStorage('theme')]);
+
+  // Function to parse dice values and log them
+  function parseDiceValues() {
+    const diceContainer = document.querySelector('.dice-history-roll-result-container');
+    if (!diceContainer) {
+      console.error('Dice container not found.');
+      return;
+    }
+
+    const diceArray = [];
+    const diceElements = diceContainer.querySelectorAll('.history-item-result__die');
+
+    diceElements.forEach(diceElement => {
+      const valueElement = diceElement.querySelector('.history-item-result__label');
+      const value = parseInt(valueElement.textContent, 10);
+      const label = diceElement.querySelector('img').alt;
+      const typeClass = Array.from(diceElement.classList).find(cls => cls.startsWith('history-item-result__die--'));
+      const type = (() => {
+        if (label === 'Hope' || label === 'Fear') {
+          return 'd12';
+        } else if (label === 'Advantage' || label === 'Disadvantage') {
+          return 'd6';
+        } else {
+          return typeClass ? typeClass.split('--')[1] : 'unknown';
+        }
+      })();
+
+      diceArray.push({
+        type: label === 'Disadvantage' ? 'mod' : type,
+        value: label === 'Disadvantage' ? -value : value,
+        theme: label==='Hope' ? 'greed-n\'-riches-lm86crmx' : theme.id,
+        label: label
+      });
+    });
+
+    const modifierElement = diceContainer.querySelector('.dice-history-item-static-modifier');
+    if (modifierElement) {
+      const modifierValue = parseInt(modifierElement.textContent.replace('+', ''), 10);
+      if (modifierValue !== 0) {
+        diceArray.push({
+          type: 'mod',
+          theme: theme.id,
+          value: modifierValue
+        });
+      }
+    }
+
+    const resultString = JSON.stringify(diceArray);
+    if (!parsedResults.has(resultString)) {
+      console.log('Parsed dice values:', diceArray);
+      sendRollRequest(diceArray);
+      parsedResults.add(resultString);
+    }
+
+    observer.disconnect(); // Stop observing after parsing the values once
   }
+
+  // Create a MutationObserver to watch for changes in the DOM
+  const observer = new MutationObserver((mutations) => {
+    mutations.forEach((mutation) => {
+      if (mutation.addedNodes.length) {
+        parseDiceValues();
+      }
+    });
+  });
+
+  // Start observing the document body for child list changes
+  observer.observe(document.body, { childList: true, subtree: true });
+}
+
+// Create a MutationObserver to watch for changes in the DOM
+const observer = new MutationObserver((mutations) => {
+  mutations.forEach((mutation) => {
+    mutation.addedNodes.forEach((node) => {
+      if (node instanceof HTMLElement && node.querySelector('.dice-roll-button--roll')) {
+        const rollButton = node.querySelector('.dice-roll-button--roll');
+        if (rollButton) {
+          rollButton.addEventListener('click', handleRollButtonClick);
+          console.log('Roll button found and event listener added');
+        }
+      }
+    });
+  });
 });
 
-function rollToDDDice(roll: string) {
-  // NOTE: There is no way to tell if the roll was made with advantage or disadvantage
-  const themeFear = 'star-teller-dice-lhwstfnd';
-  const themeHope = 'greed-n\'-riches-lm86crmx';
-  // Decode the URL-encoded string
-  const decodedRoll = decodeURIComponent(roll);
-  console.log('Decoded Roll:', decodedRoll);
-
-  // Regular expression to match dice rolls and modifiers
-  const diceRegex = /(\d+)d(\d+)/g;
-  const modifierRegex = /-?\d+$/g;
-
-  // Extract dice rolls
-  const diceMatches = [...decodedRoll.matchAll(diceRegex)];
-  const diceDetails = diceMatches.flatMap(match => {
-    const numDice = parseInt(match[1], 10);
-    const diceSize = `d${match[2]}`;
-    return Array(numDice).fill(null).map((_, index) => ({
-      type: diceSize,
-      theme: index % 2 === 0 ? themeHope : themeFear,
-      label: index % 2 === 0 ? 'Hope' : 'Fear',
-    }));
-  });
-
-  // Extract modifiers
-  const modifierMatches = [...decodedRoll.matchAll(modifierRegex)];
-  const modifiers = modifierMatches
-    .map(match => ({
-      type: 'mod',
-      theme: themeHope, // or any other theme you prefer for modifiers
-      value: parseInt(match[0], 10)
-    }))
-    .filter(modifier => modifier.value !== 0);
-  // Combine dice details and modifiers, only adding modifiers if present
-  return modifiers.length > 0 ? [...diceDetails, ...modifiers] : diceDetails;
-
-}
-function transformDiceData(diceArray) {
-  if (!Array.isArray(diceArray)) {
-    throw new TypeError('Expected an array of dice objects');
-  }
-
-  let total = 0;
-  let crit = 0;
-  const rawDiceParts = [];
-
-  const diceGroups = diceArray.reduce((acc, dice) => {
-    if (dice.type === 'mod') {
-      total += dice.value;
-      rawDiceParts.push({ type: 'operator', value: dice.value > 0 ? '+' : '-', annotation: '' });
-      rawDiceParts.push({ type: 'constant', value: Math.abs(dice.value), annotation: '' });
-    } else {
-      total += dice.value;
-      const key = `${dice.type}-${dice.theme}`;
-      if (!acc[key]) {
-        acc[key] = [];
-      }
-      acc[key].push(dice);
-    }
-    return acc;
-  }, {});
-
-  for (const key in diceGroups) {
-    const group = diceGroups[key];
-    const diceType = group[0].type;
-    const diceSize = parseInt(diceType.slice(1), 10);
-    const numDice = group.length;
-    const values = group.map(d => d.value);
-    const groupTotal = values.reduce((sum, val) => sum + val, 0);
-    const text = `${numDice}${diceType} (${values.join(', ')}) `;
-    rawDiceParts.push({
-      type: 'dice',
-      dice: group.map(d => ({
-        type: 'single_dice',
-        value: d.value,
-        size: diceSize,
-        is_kept: true,
-        rolls: [d.value],
-        exploded: false,
-        imploded: false
-      })),
-      annotation: '',
-      value: groupTotal,
-      is_crit: 0,
-      num_kept: numDice,
-      text,
-      num_dice: numDice,
-      dice_size: diceSize,
-      operators: []
-    });
-    rawDiceParts.push({ type: 'operator', value: '+', annotation: '' });
-  }
-
-  // Remove the last operator
-  if (rawDiceParts.length > 0 && rawDiceParts[rawDiceParts.length - 1].type === 'operator') {
-    rawDiceParts.pop();
-  }
-
-  return {
-    total,
-    crit,
-    raw_dice: {
-      parts: rawDiceParts
-    },
-    error: ''
-  };
-}
-
- // TODO: Add Dice from URL to send Roll Request, than await response and update chat
-function updateChat(roll: IRoll) {
-  // console.log("updateChat:", roll.values);
-  console.log(console.log("Dice Data:", transformDiceData(roll.values)));
-  const requestEvent = new CustomEvent('diceRollResponse', {
-    detail: {
-      responseText: JSON.stringify(transformDiceData(roll.values))
-      // responseText: JSON.stringify({
-      //   "total": 21,
-      //   "crit": 0,
-      //   "raw_dice": {
-      //     "parts": [
-      //       {
-      //         "type": "dice",
-      //         "dice": [
-      //           { "type": "single_dice", "value": 11, "size": 12, "is_kept": true, "rolls": [4], "exploded": false, "imploded": false },
-      //           { "type": "single_dice", "value": 10, "size": 12, "is_kept": true, "rolls": [12], "exploded": false, "imploded": false }
-      //         ],
-      //         "annotation": "",
-      //         "value": 16,
-      //         "is_crit": 0,
-      //         "num_kept": 2,
-      //         "text": "2d12 (4, 12) ",
-      //         "num_dice": 2,
-      //         "dice_size": 12,
-      //         "operators": []
-      //       },
-      //       { "type": "operator", "value": "+", "annotation": "" },
-      //       { "type": "constant", "value": 0, "annotation": "" }
-      //     ]
-      //   },
-      //   "error": ""
-      // })
-    }
-  });
-  window.dispatchEvent(requestEvent);
-}
+// Start observing the document body for child list changes
+observer.observe(document.body, { childList: true, subtree: true });
 
 async function sendRollRequest(roll) {
   // Handle the response data as needed
-  const [room, _theme] = await Promise.all([getStorage('room'), getStorage('theme')]);
-
+  const [room] = await Promise.all([getStorage('room')]);
+  console.log("Roll", roll);
   if (!dddice?.api) {
     notify(
       `dddice extension hasn't been set up yet. Please open the the extension pop up via the extensions menu`,
@@ -204,9 +145,7 @@ async function sendRollRequest(roll) {
   } else {
     try {
       await dddice.api.room.updateRolls(room.slug, { is_cleared: true });
-      await dddice.api.roll.create(roll, {
-        external_id: `dndbCharacterId:${"characterId"}`,
-      });
+      await dddice.api.roll.create(roll, {});
     } catch (e) {
       console.error(e);
       notify(`${e.response?.data?.data?.message ?? e}`);
@@ -244,7 +183,7 @@ async function initializeSDK() {
         document.body.appendChild(canvasElement);
         try {
           dddice = new ThreeDDice().initialize(canvasElement, apiKey, undefined, 'Demiplane');
-          dddice.on(ThreeDDiceRollEvent.RollFinished, (roll: IRoll) => updateChat(roll));
+          // dddice.on(ThreeDDiceRollEvent.RollFinished, (roll: IRoll) => updateChat(roll));
           dddice.start();
           if (room) {
             dddice.connect(room.slug);
@@ -267,16 +206,15 @@ async function initializeSDK() {
           console.error(e);
           notify(`${e.response?.data?.data?.message ?? e}`);
         }
-        dddice.api.listen(ThreeDDiceRollEvent.RollCreated, (roll: IRoll) =>
-          setTimeout(() => updateChat(roll), 1500),
-        );
+        // dddice.api.listen(ThreeDDiceRollEvent.RollCreated, (roll: IRoll) =>
+        //   setTimeout(() => updateChat(roll), 1500),
+        // );
       }
     } else {
       log.debug('no api key');
     }
   });
 }
-// function updateChat(roll: IRoll) {}
 
 function preloadTheme(theme: ITheme) {
   dddice.loadTheme(theme, true);

@@ -138,16 +138,7 @@
       "resources": [
         "../demiplane.css",
         "../demiplane.tsx",
-        "../demiplane_inject.ts",
         "../assets/dddice-48x48.png"
-      ],
-      "matches": [
-        "https://*.demiplane.com/*"
-      ]
-    },
-    {
-      "resources": [
-        "../demiplane_inject.ts"
       ],
       "matches": [
         "https://*.demiplane.com/*"
