@@ -85,7 +85,7 @@
         "../demiplane.tsx"
       ],
       "matches": [
-        "*://*.demiplane.com/*"
+        "https://app.demiplane.com/nexus/daggerheart/*"
       ],
       "run_at": "document_idle",
       "all_frames": true
@@ -137,11 +137,10 @@
     {
       "resources": [
         "../demiplane.css",
-        "../demiplane.tsx",
         "../assets/dddice-48x48.png"
       ],
       "matches": [
-        "https://*.demiplane.com/*"
+        "https://*.demiplane.com/nexus/daggerheart/*"
       ]
     }
   ]

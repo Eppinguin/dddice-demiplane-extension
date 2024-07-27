@@ -1,8 +1,8 @@
 /** @format */
 import browser from 'webextension-polyfill';
 import createLogger from './log';
-import { getStorage } from './storage';
-import { IRoll, ThreeDDiceRollEvent, ThreeDDice, ITheme, ThreeDDiceAPI } from 'dddice-js';
+import { getStorage, setStorage } from './storage';
+import { IRoll, ThreeDDiceRollEvent, ThreeDDice, ITheme, ThreeDDiceAPI, IUser } from 'dddice-js';
 import imageLogo from 'url:./assets/dddice-32x32.png';
 import notify from './utils/notify';
 import { Notify } from 'notiflix/build/notiflix-notify-aio';
@@ -20,16 +20,8 @@ console.log('DDDICE Demiplane');
 
 let dddice: ThreeDDice;
 let canvasElement: HTMLCanvasElement;
+let user: IUser;
 
-function injectScript(filePath: string) {
-  const script = document.createElement('script');
-  script.src = browser.runtime.getURL(filePath);
-  script.onload = function() {
-    this.remove();
-  };
-  (document.head || document.documentElement).appendChild(script);
-}
-// injectScript('up_/demiplane_inject.js');
 // Select the button element
 const rollButton = document.querySelector('.dice-roll-button--roll');
 
@@ -39,8 +31,16 @@ async function handleRollButtonClick() {
   const parsedResults = new Set<string>();
 
   // Fetch the theme
-  const [theme,hopeTheme,fearTheme] = await Promise.all([getStorage('theme'),getStorage('hopeTheme'),getStorage('fearTheme')]);
+  const [theme, hopeTheme, fearTheme] = await Promise.all([
+    getStorage('theme'),
+    getStorage('hopeTheme'),
+    getStorage('fearTheme')
+  ]);
 
+  const hopeThemeId = hopeTheme ? hopeTheme.id : null;
+  const fearThemeId = fearTheme ? fearTheme.id : null;
+
+// Use hopeThemeId and fearThemeId in your logic
   // Function to parse dice values and log them
   function parseDiceValues() {
     const diceContainer = document.querySelector('.dice-history-roll-result-container');
@@ -70,7 +70,7 @@ async function handleRollButtonClick() {
       diceArray.push({
         type: label === 'Disadvantage' ? 'mod' : type,
         value: label === 'Disadvantage' ? -value : value,
-        theme: label==='Hope' ? hopeTheme.id : label==='Fear'? fearTheme.id : theme.id,
+        theme: label==='Hope' ? hopeThemeId : label==='Fear'? fearThemeId : theme.id,
         label: label
       });
     });
@@ -89,7 +89,6 @@ async function handleRollButtonClick() {
 
     const resultString = JSON.stringify(diceArray);
     if (!parsedResults.has(resultString)) {
-      console.log('Parsed dice values:', diceArray);
       sendRollRequest(diceArray);
       parsedResults.add(resultString);
     }
@@ -131,7 +130,7 @@ observer.observe(document.body, { childList: true, subtree: true });
 async function sendRollRequest(roll) {
   // Handle the response data as needed
   const [room] = await Promise.all([getStorage('room')]);
-  console.log("Roll", roll);
+
   if (!dddice?.api) {
     notify(
       `dddice extension hasn't been set up yet. Please open the the extension pop up via the extensions menu`,
@@ -142,9 +141,44 @@ async function sendRollRequest(roll) {
     );
   } else {
     try {
-      await dddice.api.room.updateRolls(room.slug, { is_cleared: true });
+      // await dddice.api.room.updateRolls(room.slug, { is_cleared: true });
+      await updateUsername();
       await dddice.api.roll.create(roll, {});
     } catch (e) {
+      console.error(e);
+      notify(`${e.response?.data?.data?.message ?? e}`);
+    }
+  }
+}
+
+async function updateUsername() {
+  const [room] = await Promise.all([getStorage('room')]);
+  if (!dddice?.api) {
+    notify(
+      `dddice extension hasn't been set up yet. Please open the the extension pop up via the extensions menu`,
+    );
+  } else if (!room?.slug) {
+    notify(
+      'No dddice room has been selected. Please open the dddice extension pop up and select a room to roll in',
+    );
+  } else {
+    try {
+      const characterNameElement = document.querySelector('.MuiGrid-root.MuiGrid-item.text-block.character-name.css-1ipveys .text-block__text.MuiBox-root.css-1dyfylb');
+      const characterName = characterNameElement ? characterNameElement.textContent : null;
+      if (!user) {
+        user = (await dddice.api.user.get()).data;
+      }
+      const userParticipant = room.participants.find(
+        ({ user: { uuid: participantUuid } }) => participantUuid === user.uuid,
+      );
+      if (characterName && userParticipant.username != characterName) {
+        userParticipant.username = characterName;
+        setStorage({ room });
+        await dddice.api.room.updateParticipant(room.slug, userParticipant.id, {
+          username: characterName,
+        });
+      }
+    }catch (e) {
       console.error(e);
       notify(`${e.response?.data?.data?.message ?? e}`);
     }

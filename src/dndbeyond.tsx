@@ -522,6 +522,7 @@ async function rollCreate(
     );
   } else {
     try {
+      console.log("characterId", characterId, "label", label, "operator", operator);
       await dddice.api.room.updateRolls(room.slug, { is_cleared: true });
       await dddice.api.roll.create(dice, {
         operator,
