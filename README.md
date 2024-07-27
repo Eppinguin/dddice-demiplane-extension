@@ -1,3 +1,9 @@
+This is a fork that enables dddice integration for Daggerheart on Demiplane.
+In the Settings Menu the first "Dice" is the Theme for your normal dice, the second is for the Hope Die only and the third is for the Fear Die.
+DDDice does not support subtracting Die Rolls, because of that disadvantage is not rendered as a die roll, but as a modifier.
+
+# Original Readme
+
 # dddice Browser Extension
 
 Roll 3D dice from your favorite VTT! Integrates [dddice](https://dddice.com) with browser-based virtual tabletops,
