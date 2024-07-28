@@ -19,8 +19,24 @@ let dddice: ThreeDDice;
 let canvasElement: HTMLCanvasElement;
 let user: IUser;
 
-// Select the button element
-// const rollButton = document.querySelector('.dice-roll-button--roll');
+function getRollName() {
+  // Select all elements with the class 'dice-history-item-name--source'
+  const sourceElements = document.querySelectorAll('.dice-history-item-name--source');
+  // Select all elements with the class 'dice-history-item-name'
+  const nameElements = document.querySelectorAll('.dice-history-item-name');
+
+  // Get the last element from each selection
+  const lastSourceElement = sourceElements[sourceElements.length - 1];
+  const lastNameElement = nameElements[nameElements.length - 1];
+
+  // Extract and log the text content of these elements
+  if (lastSourceElement.textContent && lastSourceElement.textContent) {
+    return `${lastSourceElement.textContent}: ${lastNameElement.textContent}`;
+  }
+  else {
+    return "";
+  }
+}
 
 // Function to handle the button press
 async function handleRollButtonClick() {
@@ -98,6 +114,7 @@ async function handleRollButtonClick() {
     mutations.forEach(mutation => {
       if (mutation.addedNodes.length) {
         parseDiceValues();
+        getRollName();
       }
     });
   });
@@ -139,7 +156,8 @@ async function sendRollRequest(roll) {
     try {
       // await dddice.api.room.updateRolls(room.slug, { is_cleared: true });
       await updateUsername();
-      await dddice.api.roll.create(roll, {});
+      let label = getRollName();
+      await dddice.api.roll.create(roll, {label: label});
     } catch (e) {
       console.error(e);
       notify(`${e.response?.data?.data?.message ?? e}`);
