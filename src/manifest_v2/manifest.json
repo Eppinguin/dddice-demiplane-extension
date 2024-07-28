@@ -54,11 +54,17 @@
       "js": ["../tabyltop.tsx"],
       "matches": ["*://*.tabyltop.com/*"],
       "run_at": "document_idle"
+    },
+    {
+      "js": ["../demiplane.tsx"],
+      "matches": ["*://app.demiplane.com/*"],
+      "run_at": "document_idle"
     }
   ],
   "permissions": ["storage", "tabs", "https://cdn.dddice.com/*", "https://dddice.com/*"],
   "web_accessible_resources": [
     "../dndbeyond.css",
+    "../demiplane.css",
     "../assets/dddice-32x32.png",
     "../roll20.css",
     "../assets/dddice-48x48.png",
