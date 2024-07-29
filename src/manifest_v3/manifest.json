@@ -1,5 +1,5 @@
 {
-  "name": "dddice",
+  "name": "dddice-dh",
   "description": "Roll 3D digital dice using your favorite browser-based VTT.",
   "manifest_version": 3,
   "version": "0.7.6",
@@ -54,7 +54,7 @@
     },
     {
       "js": ["../demiplane.tsx"],
-      "matches": ["https://app.demiplane.com/nexus/daggerheart/*"],
+      "matches": ["*://*.demiplane.com/*"],
       "run_at": "document_idle",
       "all_frames": true
     }
