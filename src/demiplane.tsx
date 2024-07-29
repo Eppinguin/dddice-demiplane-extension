@@ -19,30 +19,20 @@ let dddice: ThreeDDice;
 let canvasElement: HTMLCanvasElement;
 let user: IUser;
 
-function getRollName() {
-  // Select all elements with the class 'dice-history-item-name--source'
-  const sourceElements = document.querySelectorAll('.dice-history-item-name--source');
-  // Select all elements with the class 'dice-history-item-name'
-  const nameElements = document.querySelectorAll('.dice-history-item-name');
-
-  // Get the last element from each selection
+function getRollName(): string {
+  const sourceElements = document.querySelectorAll<HTMLElement>('.dice-history-item-name--source');
+  const nameElements = document.querySelectorAll<HTMLElement>('.dice-history-item-name');
   const lastSourceElement = sourceElements[sourceElements.length - 1];
   const lastNameElement = nameElements[nameElements.length - 1];
-
-  // Extract and log the text content of these elements
-  if (lastSourceElement.textContent && lastSourceElement.textContent) {
+  if (lastSourceElement?.textContent && lastNameElement?.textContent) {
     return `${lastSourceElement.textContent}: ${lastNameElement.textContent}`;
-  }
-  else {
+  } else {
     return "";
   }
 }
 
-// Function to handle the button press
-async function handleRollButtonClick() {
+async function handleRollButtonClick(): Promise<void> {
   const parsedResults = new Set<string>();
-
-  // Fetch the theme
   const [theme, hopeTheme, fearTheme] = await Promise.all([
     getStorage('theme'),
     getStorage('hopeTheme'),
@@ -52,21 +42,19 @@ async function handleRollButtonClick() {
   const hopeThemeId = hopeTheme ? hopeTheme.id : null;
   const fearThemeId = fearTheme ? fearTheme.id : null;
 
-  // Use hopeThemeId and fearThemeId in your logic
-  // Function to parse dice values and log them
-  function parseDiceValues() {
-    const diceContainer = document.querySelector('.dice-history-roll-result-container');
+  function parseDiceValues(): void {
+    const diceContainer = document.querySelector<HTMLElement>('.dice-history-roll-result-container');
     if (!diceContainer) {
       return;
     }
 
-    const diceArray = [];
-    const diceElements = diceContainer.querySelectorAll('.history-item-result__die');
+    const diceArray: Array<{ type: string; value: number; theme: string | null; label?: string }> = [];
+    const diceElements = diceContainer.querySelectorAll<HTMLElement>('.history-item-result__die');
 
     diceElements.forEach(diceElement => {
-      const valueElement = diceElement.querySelector('.history-item-result__label');
-      const value = parseInt(valueElement.textContent, 10);
-      const label = diceElement.querySelector('img').alt;
+      const valueElement = diceElement.querySelector<HTMLElement>('.history-item-result__label');
+      const value = valueElement ? parseInt(valueElement.textContent || '0', 10) : 0;
+      const label = diceElement.querySelector<HTMLImageElement>('img')?.alt || '';
       const typeClass = Array.from(diceElement.classList).find(cls =>
         cls.startsWith('history-item-result__die--'),
       );
@@ -88,9 +76,9 @@ async function handleRollButtonClick() {
       });
     });
 
-    const modifierElement = diceContainer.querySelector('.dice-history-item-static-modifier');
+    const modifierElement = diceContainer.querySelector<HTMLElement>('.dice-history-item-static-modifier');
     if (modifierElement) {
-      const modifierValue = parseInt(modifierElement.textContent.replace('+', ''), 10);
+      const modifierValue = parseInt(modifierElement.textContent?.replace('+', '') || '0', 10);
       if (modifierValue !== 0) {
         diceArray.push({
           type: 'mod',
@@ -106,10 +94,9 @@ async function handleRollButtonClick() {
       parsedResults.add(resultString);
     }
 
-    observer.disconnect(); // Stop observing after parsing the values once
+    observer.disconnect();
   }
 
-  // Create a MutationObserver to watch for changes in the DOM
   const observer = new MutationObserver(mutations => {
     mutations.forEach(mutation => {
       if (mutation.addedNodes.length) {
@@ -119,16 +106,14 @@ async function handleRollButtonClick() {
     });
   });
 
-  // Start observing the document body for child list changes
   observer.observe(document.body, { childList: true, subtree: true });
 }
 
-// Create a MutationObserver to watch for changes in the DOM
 const observer = new MutationObserver(mutations => {
   mutations.forEach(mutation => {
     mutation.addedNodes.forEach(node => {
       if (node instanceof HTMLElement && node.querySelector('.dice-roll-button--roll')) {
-        const rollButton = node.querySelector('.dice-roll-button--roll');
+        const rollButton = node.querySelector<HTMLButtonElement>('.dice-roll-button--roll');
         if (rollButton) {
           rollButton.addEventListener('click', handleRollButtonClick);
         }
@@ -137,11 +122,9 @@ const observer = new MutationObserver(mutations => {
   });
 });
 
-// Start observing the document body for child list changes
 observer.observe(document.body, { childList: true, subtree: true });
 
-async function sendRollRequest(roll) {
-  // Handle the response data as needed
+async function sendRollRequest(roll: Array<{ type: string; value: number; theme: string | null; label?: string }>): Promise<void> {
   const [room] = await Promise.all([getStorage('room')]);
 
   if (!dddice?.api) {
@@ -154,18 +137,17 @@ async function sendRollRequest(roll) {
     );
   } else {
     try {
-      // await dddice.api.room.updateRolls(room.slug, { is_cleared: true });
       await updateUsername();
-      let label = getRollName();
-      await dddice.api.roll.create(roll, {label: label});
-    } catch (e) {
+      const label = getRollName();
+      await dddice.api.roll.create(roll, { label: label });
+    } catch (e: any) {
       console.error(e);
       notify(`${e.response?.data?.data?.message ?? e}`);
     }
   }
 }
 
-async function updateUsername() {
+async function updateUsername(): Promise<void> {
   const [room] = await Promise.all([getStorage('room')]);
   if (!dddice?.api) {
     notify(
@@ -177,7 +159,7 @@ async function updateUsername() {
     );
   } else {
     try {
-      const characterNameElement = document.querySelector(
+      const characterNameElement = document.querySelector<HTMLElement>(
         '.MuiGrid-root.MuiGrid-item.text-block.character-name.css-1ipveys .text-block__text.MuiBox-root.css-1dyfylb',
       );
       const characterName = characterNameElement ? characterNameElement.textContent : null;
@@ -187,21 +169,21 @@ async function updateUsername() {
       const userParticipant = room.participants.find(
         ({ user: { uuid: participantUuid } }) => participantUuid === user.uuid,
       );
-      if (characterName && userParticipant.username != characterName) {
+      if (characterName && userParticipant.username !== characterName) {
         userParticipant.username = characterName;
         setStorage({ room });
         await dddice.api.room.updateParticipant(room.slug, userParticipant.id, {
           username: characterName,
         });
       }
-    } catch (e) {
+    } catch (e: any) {
       console.error(e);
       notify(`${e.response?.data?.data?.message ?? e}`);
     }
   }
 }
 
-async function initializeSDK() {
+async function initializeSDK(): Promise<void> {
   return Promise.all([
     getStorage('apiKey'),
     getStorage('room'),
@@ -211,11 +193,8 @@ async function initializeSDK() {
     if (apiKey) {
       log.debug('initializeSDK', renderMode);
       if (dddice) {
-        // clear the board
         if (canvasElement) canvasElement.remove();
-        // disconnect from echo
-        if (dddice.api?.connection) dddice.api.connection.disconnect();
-        // stop the animation loop
+        if (dddice.api?.isConnected()) dddice.api.disconnect();
         dddice.stop();
       }
       if (renderMode === undefined || renderMode) {
@@ -235,7 +214,7 @@ async function initializeSDK() {
           if (room) {
             dddice.connect(room.slug);
           }
-        } catch (e) {
+        } catch (e: any) {
           console.error(e);
           notify(`${e.response?.data?.data?.message ?? e}`);
         }
@@ -249,7 +228,7 @@ async function initializeSDK() {
           if (room) {
             dddice.api.connect(room.slug);
           }
-        } catch (e) {
+        } catch (e: any) {
           console.error(e);
           notify(`${e.response?.data?.data?.message ?? e}`);
         }
@@ -260,8 +239,16 @@ async function initializeSDK() {
   });
 }
 
-function preloadTheme(theme: ITheme) {
+function preloadTheme(theme: ITheme): void {
   dddice.loadTheme(theme, true);
   dddice.loadThemeResources(theme.id, true);
 }
+
 initializeSDK();
+
+document.addEventListener('DOMContentLoaded', initializeSDK);
+window.addEventListener('storage', (event: StorageEvent) => {
+  if (event.key === 'theme' || event.key === 'render mode') {
+    initializeSDK();
+  }
+});
