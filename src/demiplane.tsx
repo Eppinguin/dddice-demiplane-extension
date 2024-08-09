@@ -1,7 +1,7 @@
 /** @format */
 import createLogger from './log';
 import { getStorage, setStorage } from './storage';
-import { ThreeDDice, ITheme, ThreeDDiceAPI, IUser } from 'dddice-js';
+import { IRoll, ThreeDDiceRollEvent, ThreeDDice, ITheme, ThreeDDiceAPI, IUser } from 'dddice-js';
 import notify from './utils/notify';
 import { Notify } from 'notiflix/build/notiflix-notify-aio';
 
@@ -148,6 +148,7 @@ async function initializeSDK(): Promise<void> {
     document.body.appendChild(canvasElement);
     try {
       dddice = new ThreeDDice().initialize(canvasElement, apiKey, undefined, 'Demiplane');
+      dddice.on(ThreeDDiceRollEvent.RollFinished, (roll: IRoll) => notifyRollFinished(roll));
       dddice.start();
       if (room) dddice.connect(room.slug);
     } catch (e: any) {
@@ -164,7 +165,27 @@ async function initializeSDK(): Promise<void> {
       console.error(e);
       notify(`${e.response?.data?.data?.message ?? e}`);
     }
+    dddice.api.listen(ThreeDDiceRollEvent.RollCreated, (roll: IRoll) =>
+      setTimeout(() => notifyRollCreated(roll), 1500),);
   }
+}
+
+function notifyRollFinished(roll: IRoll) {
+  Notify.success(generateNotificationMessage(roll));
+}
+
+function notifyRollCreated(roll: IRoll) {
+  Notify.info(generateNotificationMessage(roll));
+}
+
+function generateNotificationMessage(roll: IRoll) {
+  const roller = roll.room.participants.find(
+    participant => participant.user.uuid === roll.user.uuid,
+  );
+
+  return `${roller.username}: ${roll.equation} = ${
+    typeof roll.total_value === 'object' ? '⚠' : roll.total_value
+  }`;
 }
 
 function preloadTheme(theme: ITheme): void {
@@ -182,8 +203,9 @@ async function init() {
     }
     return;
   }
-
   log.debug('init');
+
+  // add canvas element to document
   const renderMode = getStorage('render mode');
   if (!document.getElementById('dddice-canvas') && renderMode) {
     await initializeSDK();
@@ -229,7 +251,7 @@ chrome.runtime.onMessage.addListener((message) => {
   }
 });
 
-window.addEventListener('load', () => init());
+//window.addEventListener('load', () => init());
 window.addEventListener('resize', () => init());
 
 const observer = new MutationObserver(() => init());
