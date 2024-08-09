@@ -205,7 +205,10 @@ async function init() {
     return;
   }
   log.debug('init');
-  console.log('init');
+
+  const rollButton = document.querySelector('.dice-roll-button');
+  if (!rollButton) return;
+  rollButton.addEventListener('click', handleRollButtonClick, true);
 
   // add canvas element to document
   const renderMode = getStorage('render mode');
@@ -232,25 +235,18 @@ async function init() {
       username: characterName,
     });
   }
-
-  const rollButton = document.querySelector('.dice-roll-button');
-  if (!rollButton) return;
-  rollButton.addEventListener('click', handleRollButtonClick, true);
-  // document.querySelectorAll('.dice-roll-button').forEach(element => {
-  //   if (element.nextSibling) element.nextSibling.remove();
-  //   element.addEventListener('click', handleRollButtonClick, true);
-  // });
 }
 
 document.addEventListener('click', () => {
   if (dddice && !dddice?.isDiceThrowing) dddice.clear();
 });
-// document.addEventListener('click', init, { once: true });
 
-chrome.runtime.onMessage.addListener((message) => {
+
+// @ts-ignore
+chrome.runtime.onMessage.addListener(function (message) {
   switch (message.type) {
     case 'reloadDiceEngine':
-      init();
+      initializeSDK();
       break;
     case 'preloadTheme':
       preloadTheme(message.theme);
