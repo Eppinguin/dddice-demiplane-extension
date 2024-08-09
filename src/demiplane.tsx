@@ -5,6 +5,7 @@ import { IRoll, ThreeDDiceRollEvent, ThreeDDice, ITheme, ThreeDDiceAPI, IUser } 
 import notify from './utils/notify';
 import { Notify } from 'notiflix/build/notiflix-notify-aio';
 
+
 Notify.init({
   useIcon: false,
   fontSize: '16px',
@@ -122,52 +123,52 @@ async function sendRollRequest(roll: Array<{ type: string; value: number; theme:
 }
 
 async function initializeSDK(): Promise<void> {
-  const [apiKey, room, theme, renderMode] = await Promise.all([
+  return Promise.all([
     getStorage('apiKey'),
     getStorage('room'),
     getStorage('theme'),
     getStorage('render mode'),
-  ]);
-
-  if (!apiKey) {
-    log.debug('no api key');
-    return;
-  }
-
-  log.debug('initializeSDK', renderMode);
-  if (dddice) {
-    if (canvasElement) canvasElement.remove();
-    if (dddice.api?.disconnect) dddice.api.disconnect();
-    dddice.stop();
-  }
-
-  if (renderMode === undefined || renderMode) {
-    canvasElement = document.createElement('canvas');
-    canvasElement.id = 'dddice-canvas';
-    canvasElement.style.cssText = 'top:0px; position:fixed; pointer-events:none; z-index:100000; opacity:100; height:100vh; width:100vw;';
-    document.body.appendChild(canvasElement);
-    try {
-      dddice = new ThreeDDice().initialize(canvasElement, apiKey, undefined, 'Demiplane');
-      dddice.on(ThreeDDiceRollEvent.RollFinished, (roll: IRoll) => notifyRollFinished(roll));
-      dddice.start();
-      if (room) dddice.connect(room.slug);
-    } catch (e: any) {
-      console.error(e);
-      notify(`${e.response?.data?.data?.message ?? e}`);
+  ]).then(async ([apiKey, room, theme, renderMode]) => {
+    if (!apiKey) {
+      log.debug('no api key');
+      return;
     }
-    if (theme) preloadTheme(theme);
-  } else {
-    try {
-      dddice = new ThreeDDice();
-      dddice.api = new ThreeDDiceAPI(apiKey, 'Demiplane');
-      if (room) dddice.api.connect(room.slug);
-    } catch (e: any) {
-      console.error(e);
-      notify(`${e.response?.data?.data?.message ?? e}`);
+
+    log.debug('initializeSDK', renderMode);
+    if (dddice) {
+      if (canvasElement) canvasElement.remove();
+      if (dddice.api?.disconnect) dddice.api.disconnect();
+      dddice.stop();
     }
-    dddice.api.listen(ThreeDDiceRollEvent.RollCreated, (roll: IRoll) =>
-      setTimeout(() => notifyRollCreated(roll), 1500),);
-  }
+
+    if (renderMode === undefined || renderMode) {
+      canvasElement = document.createElement('canvas');
+      canvasElement.id = 'dddice-canvas';
+      canvasElement.style.cssText = 'top:0px; position:fixed; pointer-events:none; z-index:100000; opacity:100; height:100vh; width:100vw;';
+      document.body.appendChild(canvasElement);
+      try {
+        dddice = new ThreeDDice().initialize(canvasElement, apiKey, undefined, 'Demiplane');
+        dddice.on(ThreeDDiceRollEvent.RollFinished, (roll: IRoll) => notifyRollFinished(roll));
+        dddice.start();
+        if (room) dddice.connect(room.slug);
+      } catch (e: any) {
+        console.error(e);
+        notify(`${e.response?.data?.data?.message ?? e}`);
+      }
+      if (theme) preloadTheme(theme);
+    } else {
+      try {
+        dddice = new ThreeDDice();
+        dddice.api = new ThreeDDiceAPI(apiKey, 'Demiplane');
+        if (room) dddice.api.connect(room.slug);
+      } catch (e: any) {
+        console.error(e);
+        notify(`${e.response?.data?.data?.message ?? e}`);
+      }
+      dddice.api.listen(ThreeDDiceRollEvent.RollCreated, (roll: IRoll) =>
+        setTimeout(() => notifyRollCreated(roll), 1500),);
+    }
+  });
 }
 
 function notifyRollFinished(roll: IRoll) {
@@ -204,6 +205,7 @@ async function init() {
     return;
   }
   log.debug('init');
+  console.log('init');
 
   // add canvas element to document
   const renderMode = getStorage('render mode');
@@ -231,33 +233,47 @@ async function init() {
     });
   }
 
-  document.querySelectorAll('.dice-roll-button').forEach(element => {
-    if (element.nextSibling) element.nextSibling.remove();
-    element.addEventListener('click', handleRollButtonClick, true);
-  });
+  const rollButton = document.querySelector('.dice-roll-button');
+  if (!rollButton) return;
+  rollButton.addEventListener('click', handleRollButtonClick, true);
+  // document.querySelectorAll('.dice-roll-button').forEach(element => {
+  //   if (element.nextSibling) element.nextSibling.remove();
+  //   element.addEventListener('click', handleRollButtonClick, true);
+  // });
 }
 
 document.addEventListener('click', () => {
   if (dddice && !dddice?.isDiceThrowing) dddice.clear();
 });
+// document.addEventListener('click', init, { once: true });
 
 chrome.runtime.onMessage.addListener((message) => {
   switch (message.type) {
     case 'reloadDiceEngine':
-      initializeSDK();
+      init();
       break;
     case 'preloadTheme':
       preloadTheme(message.theme);
   }
 });
 
-//window.addEventListener('load', () => init());
+// window.addEventListener('load', () => init());
 window.addEventListener('resize', () => init());
 
-const observer = new MutationObserver(() => init());
+const observer = new MutationObserver(() => {
+  const diceRollerOpen = document.querySelector('.dice-roller--open');
+  if (diceRollerOpen) {
+    init();
+    observer.observe(diceRollerOpen, {
+      attributes: true,
+      childList: true,
+      subtree: true,
+    });
+  }
+});
+
 window.addEventListener('load', () => {
-  observer.observe(document.getElementById('layout-root'), {
-    attributes: true,
+  observer.observe(document.body, {
     childList: true,
     subtree: true,
   });
