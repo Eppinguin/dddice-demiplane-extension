@@ -76,10 +76,6 @@
     {
       "resources": ["../pathbuilder2e.css", "../assets/dddice-48x48.png"],
       "matches": ["https://pathbuilder2e.com/*"]
-    },
-    {
-      "resources": ["../demiplane.css"],
-      "matches": ["https://app.demiplane.com/*"]
     }
   ]
 }
