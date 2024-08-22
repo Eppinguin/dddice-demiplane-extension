@@ -29,6 +29,19 @@ function getRollName(): string {
     ? `${lastSourceElement.textContent}: ${lastNameElement.textContent}`
     : "";
 }
+function getTypeResult(): string {
+  const historyElement = document.querySelector('.dice-roller-history--0');
+
+  if (historyElement) {
+    const hasFear = historyElement.classList.contains('dice-roller-history--roll-with-fear');
+    const hasHope = historyElement.classList.contains('dice-roller-history--roll-with-hope');
+    const hasCriticalSuccess = historyElement.classList.contains('dice-roller-history--critical-success');
+
+    if (hasFear) return ' with Fear';
+    if (hasHope) return ' with Hope';
+    if (hasCriticalSuccess) return ' Critical Success!';
+  }
+  }
 
 async function handleRollButtonClick(): Promise<void> {
   const parsedResults = new Set<string>();
@@ -93,7 +106,6 @@ async function handleRollButtonClick(): Promise<void> {
     mutations.forEach(mutation => {
       if (mutation.addedNodes.length) {
         parseDiceValues();
-        getRollName();
       }
     });
   });
@@ -113,7 +125,7 @@ async function sendRollRequest(roll: Array<{ type: string; value: number; theme:
     );
   } else {
     try {
-      const label = getRollName();
+      const label = getRollName() + getTypeResult();
       await dddice.api.roll.create(roll, { label: label });
     } catch (e: any) {
       console.error(e);
