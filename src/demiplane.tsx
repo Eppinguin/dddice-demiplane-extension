@@ -5,7 +5,6 @@ import { IRoll, ThreeDDiceRollEvent, ThreeDDice, ITheme, ThreeDDiceAPI, IUser } 
 import notify from './utils/notify';
 import { Notify } from 'notiflix/build/notiflix-notify-aio';
 
-
 Notify.init({
   useIcon: false,
   fontSize: '16px',
@@ -27,7 +26,7 @@ function getRollName(): string {
   const lastNameElement = nameElements[nameElements.length - 1];
   return lastSourceElement?.textContent && lastNameElement?.textContent
     ? `${lastSourceElement.textContent}: ${lastNameElement.textContent}`
-    : "";
+    : '';
 }
 function getTypeResult(): string {
   const historyElement = document.querySelector('.dice-roller-history--0');
@@ -35,13 +34,16 @@ function getTypeResult(): string {
   if (historyElement) {
     const hasFear = historyElement.classList.contains('dice-roller-history--roll-with-fear');
     const hasHope = historyElement.classList.contains('dice-roller-history--roll-with-hope');
-    const hasCriticalSuccess = historyElement.classList.contains('dice-roller-history--critical-success');
+    const hasCriticalSuccess = historyElement.classList.contains(
+      'dice-roller-history--critical-success',
+    );
 
     if (hasFear) return ' with Fear';
     if (hasHope) return ' with Hope';
     if (hasCriticalSuccess) return ' Critical Success!';
   }
-  }
+  return '';
+}
 
 async function handleRollButtonClick(): Promise<void> {
   const parsedResults = new Set<string>();
@@ -54,10 +56,17 @@ async function handleRollButtonClick(): Promise<void> {
   const fearThemeId = fearTheme ? fearTheme.id : null;
 
   function parseDiceValues(): void {
-    const diceContainer = document.querySelector<HTMLElement>('.dice-history-roll-result-container');
+    const diceContainer = document.querySelector<HTMLElement>(
+      '.dice-history-roll-result-container',
+    );
     if (!diceContainer) return;
 
-    const diceArray: Array<{ type: string; value: number; theme: string | null; label?: string }> = [];
+    const diceArray: Array<{
+      type: string;
+      value: number;
+      theme: string | undefined;
+      label?: string;
+    }> = [];
     const diceElements = diceContainer.querySelectorAll<HTMLElement>('.history-item-result__die');
 
     diceElements.forEach(diceElement => {
@@ -81,7 +90,9 @@ async function handleRollButtonClick(): Promise<void> {
       });
     });
 
-    const modifierElement = diceContainer.querySelector<HTMLElement>('.dice-history-item-static-modifier');
+    const modifierElement = diceContainer.querySelector<HTMLElement>(
+      '.dice-history-item-static-modifier',
+    );
     if (modifierElement) {
       const modifierValue = parseInt(modifierElement.textContent?.replace('+', '') || '0', 10);
       if (modifierValue !== 0) {
@@ -113,7 +124,9 @@ async function handleRollButtonClick(): Promise<void> {
   observer.observe(document.body, { childList: true, subtree: true });
 }
 
-async function sendRollRequest(roll: Array<{ type: string; value: number; theme: string | null; label?: string }>): Promise<void> {
+async function sendRollRequest(
+  roll: Array<{ type: string; value: number; theme: string | undefined; label?: string }>,
+): Promise<void> {
   const [room] = await Promise.all([getStorage('room')]);
   if (!dddice?.api) {
     notify(
@@ -156,7 +169,8 @@ async function initializeSDK(): Promise<void> {
     if (renderMode === undefined || renderMode) {
       canvasElement = document.createElement('canvas');
       canvasElement.id = 'dddice-canvas';
-      canvasElement.style.cssText = 'top:0px; position:fixed; pointer-events:none; z-index:100000; opacity:100; height:100vh; width:100vw;';
+      canvasElement.style.cssText =
+        'top:0px; position:fixed; pointer-events:none; z-index:100000; opacity:100; height:100vh; width:100vw;';
       document.body.appendChild(canvasElement);
       try {
         dddice = new ThreeDDice().initialize(canvasElement, apiKey, undefined, 'Demiplane');
@@ -177,8 +191,9 @@ async function initializeSDK(): Promise<void> {
         console.error(e);
         notify(`${e.response?.data?.data?.message ?? e}`);
       }
-      dddice.api.listen(ThreeDDiceRollEvent.RollCreated, (roll: IRoll) =>
-        setTimeout(() => notifyRollCreated(roll), 1500),);
+      dddice.api?.listen(ThreeDDiceRollEvent.RollCreated, (roll: IRoll) =>
+        setTimeout(() => notifyRollCreated(roll), 1500),
+      );
     }
   });
 }
@@ -196,7 +211,7 @@ function generateNotificationMessage(roll: IRoll) {
     participant => participant.user.uuid === roll.user.uuid,
   );
 
-  return `${roller.username}: ${roll.equation} = ${
+  return `${roller?.username ?? 'Unknown'}: ${roll.equation} = ${
     typeof roll.total_value === 'object' ? '⚠' : roll.total_value
   }`;
 }
@@ -212,7 +227,7 @@ async function init() {
     const currentCanvas = document.getElementById('dddice-canvas');
     if (currentCanvas) {
       currentCanvas.remove();
-      dddice = undefined;
+      dddice = undefined as unknown as ThreeDDice;
     }
     return;
   }
@@ -223,27 +238,27 @@ async function init() {
   rollButton.addEventListener('click', handleRollButtonClick, true);
 
   // add canvas element to document
-  const renderMode = getStorage('render mode');
+  const renderMode = await getStorage('render mode');
   if (!document.getElementById('dddice-canvas') && renderMode) {
     await initializeSDK();
   }
 
   const room = await getStorage('room');
   if (!user) {
-    user = (await dddice.api.user.get()).data;
+    user = (await dddice?.api?.user.get())?.data;
   }
   const characterName = document.querySelector<HTMLElement>(
     '.MuiGrid-root.MuiGrid-item.text-block.character-name.css-1ipveys .text-block__text.MuiBox-root.css-1dyfylb',
   )?.textContent;
 
-  const userParticipant = room.participants.find(
+  const userParticipant = room?.participants.find(
     ({ user: { uuid: participantUuid } }) => participantUuid === user.uuid,
   );
 
-  if (characterName && userParticipant.username != characterName) {
+  if (characterName && userParticipant?.username != characterName) {
     userParticipant.username = characterName;
     setStorage({ room });
-    await dddice.api.room.updateParticipant(room.slug, userParticipant.id, {
+    await dddice?.api?.room.updateParticipant(room.slug, userParticipant.id, {
       username: characterName,
     });
   }
@@ -252,7 +267,6 @@ async function init() {
 document.addEventListener('click', () => {
   if (dddice && !dddice?.isDiceThrowing) dddice.clear();
 });
-
 
 // @ts-ignore
 chrome.runtime.onMessage.addListener(function (message) {
