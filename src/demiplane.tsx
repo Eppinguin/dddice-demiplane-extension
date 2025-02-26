@@ -148,54 +148,54 @@ async function sendRollRequest(
 }
 
 async function initializeSDK(): Promise<void> {
-  return Promise.all([
+  const [apiKey, room, theme, renderMode] = await Promise.all([
     getStorage('apiKey'),
     getStorage('room'),
     getStorage('theme'),
     getStorage('render mode'),
-  ]).then(async ([apiKey, room, theme, renderMode]) => {
-    if (!apiKey) {
-      log.debug('no api key');
-      return;
-    }
+  ]);
 
-    log.debug('initializeSDK', renderMode);
-    if (dddice) {
-      if (canvasElement) canvasElement.remove();
-      if (dddice.api?.disconnect) dddice.api.disconnect();
-      dddice.stop();
-    }
+  if (!apiKey) {
+    log.debug('no api key');
+    return;
+  }
 
+  log.debug('initializeSDK', renderMode);
+  if (dddice) {
+    if (canvasElement) canvasElement.remove();
+    if (dddice.api?.disconnect) dddice.api.disconnect();
+    dddice.stop();
+  }
+
+  try {
     if (renderMode === undefined || renderMode) {
       canvasElement = document.createElement('canvas');
       canvasElement.id = 'dddice-canvas';
       canvasElement.style.cssText =
         'top:0px; position:fixed; pointer-events:none; z-index:100000; opacity:100; height:100vh; width:100vw;';
       document.body.appendChild(canvasElement);
-      try {
-        dddice = new ThreeDDice().initialize(canvasElement, apiKey, undefined, 'Demiplane');
-        dddice.on(ThreeDDiceRollEvent.RollFinished, (roll: IRoll) => notifyRollFinished(roll));
-        dddice.start();
-        if (room) dddice.connect(room.slug);
-      } catch (e: any) {
-        console.error(e);
-        notify(`${e.response?.data?.data?.message ?? e}`);
+
+      dddice = new ThreeDDice().initialize(canvasElement, apiKey, undefined, 'Demiplane');
+      dddice.on(ThreeDDiceRollEvent.RollFinished, (roll: IRoll) => notifyRollFinished(roll));
+      dddice.start();
+      if (room?.slug) {
+        dddice.connect(room.slug);
       }
-      if (theme) preloadTheme(theme);
     } else {
-      try {
-        dddice = new ThreeDDice();
-        dddice.api = new ThreeDDiceAPI(apiKey, 'Demiplane');
-        if (room) dddice.api.connect(room.slug);
-      } catch (e: any) {
-        console.error(e);
-        notify(`${e.response?.data?.data?.message ?? e}`);
+      dddice = new ThreeDDice();
+      dddice.api = new ThreeDDiceAPI(apiKey, 'Demiplane');
+      if (room?.slug) {
+        dddice.api.connect(room.slug);
       }
       dddice.api?.listen(ThreeDDiceRollEvent.RollCreated, (roll: IRoll) =>
         setTimeout(() => notifyRollCreated(roll), 1500),
       );
     }
-  });
+    if (theme) preloadTheme(theme);
+  } catch (e: any) {
+    console.error(e);
+    notify(`${e.response?.data?.data?.message ?? e}`);
+  }
 }
 
 function notifyRollFinished(roll: IRoll) {
@@ -237,16 +237,20 @@ async function init() {
   if (!rollButton) return;
   rollButton.addEventListener('click', handleRollButtonClick, true);
 
-  // add canvas element to document
-  const renderMode = await getStorage('render mode');
-  if (!document.getElementById('dddice-canvas') && renderMode) {
+  // Initialize SDK if not already initialized
+  if (!dddice?.api) {
     await initializeSDK();
   }
 
   const room = await getStorage('room');
   if (!user) {
-    user = (await dddice?.api?.user.get())?.data;
+    try {
+      user = (await dddice?.api?.user.get())?.data;
+    } catch (e) {
+      log.debug('Failed to get user', e);
+    }
   }
+
   const characterName = document.querySelector<HTMLElement>(
     '.MuiGrid-root.MuiGrid-item.text-block.character-name.css-1ipveys .text-block__text.MuiBox-root.css-1dyfylb',
   )?.textContent;
@@ -276,12 +280,15 @@ chrome.runtime.onMessage.addListener(function (message) {
       break;
     case 'preloadTheme':
       preloadTheme(message.theme);
+      break;
   }
 });
 
-// window.addEventListener('load', () => init());
+// Initialize on page load and resize
+window.addEventListener('load', () => init());
 window.addEventListener('resize', () => init());
 
+// Add mutation observers to catch DOM changes
 const observer = new MutationObserver(() => {
   const diceRollerOpen = document.querySelector('.dice-roller--open');
   if (diceRollerOpen) {
@@ -294,6 +301,7 @@ const observer = new MutationObserver(() => {
   }
 });
 
+// Observe body for dice roller changes
 window.addEventListener('load', () => {
   observer.observe(document.body, {
     childList: true,
