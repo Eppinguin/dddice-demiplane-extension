@@ -1,9 +1,22 @@
 /** @format */
+// Add error handlers at the very start
+window.addEventListener('error', event => {
+  console.error('dddice-demiplane script error:', event.error);
+});
+
+window.addEventListener('unhandledrejection', event => {
+  console.error('dddice-demiplane unhandled promise rejection:', event.reason);
+});
+
 import createLogger from './log';
 import { getStorage, setStorage } from './storage';
 import { IRoll, ThreeDDiceRollEvent, ThreeDDice, ITheme, ThreeDDiceAPI, IUser } from 'dddice-js';
 import notify from './utils/notify';
 import { Notify } from 'notiflix/build/notiflix-notify-aio';
+
+const log = createLogger('demiplane');
+log.debug('dddice-demiplane script starting...');
+log.info('DDDICE Demiplane');
 
 Notify.init({
   useIcon: false,
@@ -12,138 +25,251 @@ Notify.init({
   clickToClose: true,
 });
 
-const log = createLogger('demiplane');
-log.info('DDDICE Demiplane');
-
 let dddice: ThreeDDice;
 let canvasElement: HTMLCanvasElement;
 let user: IUser;
 
-function getRollName(): string {
-  const sourceElements = document.querySelectorAll<HTMLElement>('.dice-history-item-name--source');
-  const nameElements = document.querySelectorAll<HTMLElement>('.dice-history-item-name');
-  const lastSourceElement = sourceElements[sourceElements.length - 1];
-  const lastNameElement = nameElements[nameElements.length - 1];
-  return lastSourceElement?.textContent && lastNameElement?.textContent
-    ? `${lastSourceElement.textContent}: ${lastNameElement.textContent}`
-    : '';
+interface DiceRoll {
+  type: string;
+  name: string;
+  result: {
+    dice: Array<{
+      id: number;
+      die: string;
+      value: number;
+      maxValue: number;
+      slug: string;
+      is_kept: boolean;
+      originalValue?: number;
+      config: {
+        priority: number;
+        dieSlug: string;
+        slug: string;
+        image: string;
+        rerollable: boolean;
+        name: string;
+        isNegative?: boolean;
+      };
+    }>;
+    total: number;
+    maxTotal: number;
+    crit: number;
+    status: {
+      priority: number;
+      slug: string;
+      label: string;
+      conditions: Array<any>;
+    };
+  };
+  dice: Array<{
+    slug: string;
+    die: string;
+    label: string;
+    image: string;
+    pooledImage: string;
+  }>;
+  roll: string;
+  modifiersParsed: Array<{
+    value: number | string;
+    purpose: string;
+    rollString: string;
+  }>;
+  rerolled: boolean;
 }
-function getTypeResult(): string {
-  const historyElement = document.querySelector('.dice-roller-history--0');
 
-  if (historyElement) {
-    const hasFear = historyElement.classList.contains('dice-roller-history--roll-with-fear');
-    const hasHope = historyElement.classList.contains('dice-roller-history--roll-with-hope');
-    const hasCriticalSuccess = historyElement.classList.contains(
-      'dice-roller-history--critical-success',
-    );
+function getRollNameFromData(roll: DiceRoll): string {
+  const purposeModifier = roll.modifiersParsed.find(m => m.purpose === 'misc');
+  const nameModifier = roll.modifiersParsed[2]; // Based on the example, this seems to be where the ability/spell name is
 
-    if (hasFear) return ' with Fear';
-    if (hasHope) return ' with Hope';
-    if (hasCriticalSuccess) return ' Critical Success!';
+  if (purposeModifier?.value && nameModifier?.value) {
+    return `${purposeModifier.value}: ${nameModifier.value}`;
   }
+  return roll.name;
+}
+
+function getTypeResultFromData(roll: DiceRoll): string {
+  if (roll.result.status.slug === 'critical-success') {
+    return ' Critical Success!';
+  }
+
+  const hasFear = roll.dice.some(d => d.slug === 'fear');
+  const hasHope = roll.dice.some(d => d.slug === 'hope');
+
+  if (hasFear) return ' with Fear';
+  if (hasHope) return ' with Hope';
   return '';
 }
 
-async function handleRollButtonClick(): Promise<void> {
-  const parsedResults = new Set<string>();
-  const [theme, hopeTheme, fearTheme] = await Promise.all([
-    getStorage('theme'),
-    getStorage('hopeTheme'),
-    getStorage('fearTheme'),
-  ]);
-  const hopeThemeId = hopeTheme ? hopeTheme.id : null;
-  const fearThemeId = fearTheme ? fearTheme.id : null;
+function processRoll(roll: DiceRoll): void {
+  log.debug('Processing roll:', {
+    name: roll.name,
+    dice: roll.dice.map(d => d.die),
+    modifiers: roll.modifiersParsed,
+    result: roll.result,
+  });
 
-  function parseDiceValues(): void {
-    const diceContainer = document.querySelector<HTMLElement>(
-      '.dice-history-roll-result-container',
-    );
-    if (!diceContainer) return;
+  const diceArray: Array<{
+    type: string;
+    value: number;
+    theme: string | undefined;
+    label?: string;
+  }> = [];
 
-    const diceArray: Array<{
-      type: string;
-      value: number;
-      theme: string | undefined;
-      label?: string;
-    }> = [];
-    const diceElements = diceContainer.querySelectorAll<HTMLElement>('.history-item-result__die');
+  roll.result.dice.forEach(die => {
+    const value = die.config.isNegative ? -die.value : die.value;
+    const label = die.config.name;
 
-    diceElements.forEach(diceElement => {
-      const valueElement = diceElement.querySelector<HTMLElement>('.history-item-result__label');
-      const value = valueElement ? parseInt(valueElement.textContent || '0', 10) : 0;
-      const label = diceElement.querySelector<HTMLImageElement>('img')?.alt || '';
-      const typeClass = Array.from(diceElement.classList).find(cls =>
-        cls.startsWith('history-item-result__die--'),
-      );
-      const type = (() => {
-        if (label === 'Hope' || label === 'Fear') return 'd12';
-        if (label === 'Advantage' || label === 'Disadvantage') return 'd6';
-        return typeClass ? typeClass.split('--')[1] : 'unknown';
-      })();
-
-      diceArray.push({
-        type: label === 'Disadvantage' ? 'mod' : type,
-        value: label === 'Disadvantage' ? -value : value,
-        theme: label === 'Hope' ? hopeThemeId : label === 'Fear' ? fearThemeId : theme.id,
-        label: label,
-      });
-    });
-
-    const modifierElement = diceContainer.querySelector<HTMLElement>(
-      '.dice-history-item-static-modifier',
-    );
-    if (modifierElement) {
-      const modifierValue = parseInt(modifierElement.textContent?.replace('+', '') || '0', 10);
-      if (modifierValue !== 0) {
-        diceArray.push({
-          type: 'mod',
-          theme: theme.id,
-          value: modifierValue,
-        });
-      }
-    }
-
-    const resultString = JSON.stringify(diceArray);
-    if (!parsedResults.has(resultString)) {
-      sendRollRequest(diceArray);
-      parsedResults.add(resultString);
-    }
-
-    observer.disconnect();
-  }
-
-  const observer = new MutationObserver(mutations => {
-    mutations.forEach(mutation => {
-      if (mutation.addedNodes.length) {
-        parseDiceValues();
-      }
+    diceArray.push({
+      type: die.value > 0 ? die.die : 'mod',
+      value,
+      theme: undefined, // Will be set in sendRollRequest based on die type
+      label,
     });
   });
 
-  observer.observe(document.body, { childList: true, subtree: true });
+  // Add static modifier if present
+  const modifierValue = roll.modifiersParsed.find(m => m.purpose === 'add')?.value;
+  if (typeof modifierValue === 'number' && modifierValue !== 0) {
+    diceArray.push({
+      type: 'mod',
+      value: modifierValue,
+      theme: undefined,
+    });
+  }
+
+  log.debug('Prepared dice array for 3D roll:', diceArray);
+  sendRollRequest(diceArray, roll);
+}
+
+async function watchLocalStorage(): Promise<void> {
+  // Get character UUID from URL
+  const match = window.location.pathname.match(/\/nexus\/[^/]+\/character-sheet\/([^/]+)/);
+  if (!match) {
+    log.debug('No character UUID found in URL');
+    return;
+  }
+
+  const characterUuid = match[1];
+  const storageKey = `${characterUuid}-dice-history`;
+  log.debug('Watching localStorage key:', storageKey);
+
+  // Initialize lastRolls with current state to prevent rolling on page load
+  const historyString = localStorage.getItem(storageKey);
+  let lastRolls: DiceRoll[] | null = historyString ? JSON.parse(historyString) : null;
+
+  const checkForNewRolls = async () => {
+    const historyString = localStorage.getItem(storageKey);
+    if (!historyString) return;
+
+    try {
+      const currentRolls: DiceRoll[] = JSON.parse(historyString);
+
+      if (
+        !lastRolls ||
+        (currentRolls[0] && JSON.stringify(currentRolls[0]) !== JSON.stringify(lastRolls[0]))
+      ) {
+        // Process only the newest roll
+        const newestRoll = currentRolls[0];
+        if (newestRoll) {
+          log.debug(
+            'Processing roll:',
+            newestRoll.name,
+            'with dice:',
+            newestRoll.dice.map(d => d.die).join(', '),
+          );
+          processRoll(newestRoll);
+        }
+        lastRolls = currentRolls;
+      }
+    } catch (e) {
+      console.error('Error parsing dice history:', e);
+    }
+  };
+
+  // Only set up the interval to watch for future changes
+  setInterval(checkForNewRolls, 1000);
 }
 
 async function sendRollRequest(
   roll: Array<{ type: string; value: number; theme: string | undefined; label?: string }>,
+  originalRoll: DiceRoll,
 ): Promise<void> {
-  const [room] = await Promise.all([getStorage('room')]);
+  const [room, theme, hopeTheme, fearTheme] = await Promise.all([
+    getStorage('room'),
+    getStorage('theme'),
+    getStorage('hopeTheme'),
+    getStorage('fearTheme'),
+  ]);
+
   if (!dddice?.api) {
     notify(
-      `dddice extension hasn't been set up yet. Please open the the extension pop up via the extensions menu`,
+      `dddice extension hasn't been set up yet. Please open the extension pop up via the extensions menu`,
     );
-  } else if (!room?.slug) {
+    return;
+  }
+
+  if (!room?.slug) {
     notify(
       'No dddice room has been selected. Please open the dddice extension pop up and select a room to roll in',
     );
-  } else {
+    return;
+  }
+
+  // Wait for initialization using public methods
+  if (dddice) {
+    log.debug('Waiting for 3D engine to initialize...');
     try {
-      const label = getRollName() + getTypeResult();
-      await dddice.api.roll.create(roll, { label: label });
-    } catch (e: any) {
-      console.error(e);
-      notify(`${e.response?.data?.data?.message ?? e}`);
+      await new Promise<void>((resolve, reject) => {
+        let attempts = 0;
+        const maxAttempts = 50; // 5 seconds total
+        const checkReady = () => {
+          // Use a try-catch to check if the engine is ready
+          try {
+            // Attempt to access a method that requires initialization
+            dddice.clear();
+            resolve();
+          } catch (e) {
+            if (attempts >= maxAttempts) {
+              reject(new Error('3D engine initialization timeout'));
+            } else {
+              attempts++;
+              setTimeout(checkReady, 100);
+            }
+          }
+        };
+        checkReady();
+      });
+    } catch (e) {
+      console.error('Failed to initialize 3D engine:', e);
+      notify('Failed to initialize 3D engine. Please refresh the page.');
+      return;
     }
+  }
+
+  try {
+    log.debug('Sending roll:', roll);
+    // Assign themes based on die type
+    roll.forEach(die => {
+      if (die.label === 'Hope') {
+        die.theme = hopeTheme?.id;
+      } else if (die.label === 'Fear') {
+        die.theme = fearTheme?.id;
+      } else {
+        die.theme = theme?.id;
+      }
+    });
+
+    if (!theme?.id) {
+      log.debug('No theme selected, using default');
+    }
+
+    const label = getRollNameFromData(originalRoll) + getTypeResultFromData(originalRoll);
+    await dddice.api.roll.create(roll, { label: label });
+  } catch (e: any) {
+    console.error('Roll creation failed:', e);
+    notify(
+      `Failed to create roll: ${e.response?.data?.data?.message ?? e.message ?? 'Unknown error'}`,
+    );
   }
 }
 
@@ -162,9 +288,15 @@ async function initializeSDK(): Promise<void> {
 
   log.debug('initializeSDK', renderMode);
   if (dddice) {
-    if (canvasElement) canvasElement.remove();
-    if (dddice.api?.disconnect) dddice.api.disconnect();
-    dddice.stop();
+    try {
+      if (canvasElement) canvasElement.remove();
+      if (dddice.api?.disconnect) {
+        await dddice.api.disconnect();
+      }
+      await dddice.stop();
+    } catch (e) {
+      console.error('Error cleaning up previous instance:', e);
+    }
   }
 
   try {
@@ -176,25 +308,59 @@ async function initializeSDK(): Promise<void> {
       document.body.appendChild(canvasElement);
 
       dddice = new ThreeDDice().initialize(canvasElement, apiKey, undefined, 'Demiplane');
+
+      // Wait for initialization using public methods
+      try {
+        await new Promise<void>((resolve, reject) => {
+          let attempts = 0;
+          const maxAttempts = 50; // 5 seconds total
+          const checkInitialized = () => {
+            try {
+              // Attempt to access a method that requires initialization
+              dddice.clear();
+              resolve();
+            } catch (e) {
+              if (attempts >= maxAttempts) {
+                reject(new Error('Initialization timeout'));
+              } else {
+                attempts++;
+                setTimeout(checkInitialized, 100);
+              }
+            }
+          };
+          checkInitialized();
+        });
+      } catch (e) {
+        const error = e as Error;
+        throw new Error('Failed to initialize ThreeDDice: ' + error.message);
+      }
+
       dddice.on(ThreeDDiceRollEvent.RollFinished, (roll: IRoll) => notifyRollFinished(roll));
-      dddice.start();
+      await dddice.start();
+
       if (room?.slug) {
-        dddice.connect(room.slug);
+        await dddice.connect(room.slug);
       }
     } else {
       dddice = new ThreeDDice();
       dddice.api = new ThreeDDiceAPI(apiKey, 'Demiplane');
       if (room?.slug) {
-        dddice.api.connect(room.slug);
+        await dddice.api.connect(room.slug);
       }
       dddice.api?.listen(ThreeDDiceRollEvent.RollCreated, (roll: IRoll) =>
         setTimeout(() => notifyRollCreated(roll), 1500),
       );
     }
-    if (theme) preloadTheme(theme);
+
+    if (theme) {
+      await preloadTheme(theme);
+    }
   } catch (e: any) {
-    console.error(e);
-    notify(`${e.response?.data?.data?.message ?? e}`);
+    console.error('SDK initialization failed:', e);
+    notify(
+      `Failed to initialize: ${e.response?.data?.data?.message ?? e.message ?? 'Unknown error'}`,
+    );
+    throw e;
   }
 }
 
@@ -216,13 +382,25 @@ function generateNotificationMessage(roll: IRoll) {
   }`;
 }
 
-function preloadTheme(theme: ITheme): void {
-  dddice.loadTheme(theme, true);
-  dddice.loadThemeResources(theme.id, true);
+function preloadTheme(theme: ITheme): Promise<void> {
+  if (!theme || !dddice) {
+    log.debug('Cannot preload theme: missing theme or dddice instance');
+    return Promise.resolve();
+  }
+
+  try {
+    dddice.loadTheme(theme, true);
+    // Just execute loadThemeResources and return void
+    dddice.loadThemeResources(theme.id, true);
+    return Promise.resolve();
+  } catch (e) {
+    console.error('Error preloading theme:', e);
+    return Promise.reject(e);
+  }
 }
 
 async function init() {
-  if (!/^\/(nexus\/daggerheart\/character-sheet\/.+)/.test(window.location.pathname)) {
+  if (!/\/nexus\/[^/]+\/character-sheet\/.+/.test(window.location.pathname)) {
     log.debug('uninit');
     const currentCanvas = document.getElementById('dddice-canvas');
     if (currentCanvas) {
@@ -231,14 +409,12 @@ async function init() {
     }
     return;
   }
+  log.debug('Initializing dddice extension');
   log.debug('init');
-
-  const rollButton = document.querySelector('.dice-roll-button');
-  if (!rollButton) return;
-  rollButton.addEventListener('click', handleRollButtonClick, true);
 
   // Initialize SDK if not already initialized
   if (!dddice?.api) {
+    log.debug('Initializing SDK');
     await initializeSDK();
   }
 
@@ -254,7 +430,7 @@ async function init() {
   const characterName = document.querySelector<HTMLElement>(
     '.MuiGrid-root.MuiGrid-item.text-block.character-name.css-1ipveys .text-block__text.MuiBox-root.css-1dyfylb',
   )?.textContent;
-
+  console.log('characterName', characterName);
   const userParticipant = room?.participants.find(
     ({ user: { uuid: participantUuid } }) => participantUuid === user.uuid,
   );
@@ -266,6 +442,10 @@ async function init() {
       username: characterName,
     });
   }
+
+  // Start watching localStorage for dice rolls
+  log.debug('Starting localStorage watch');
+  watchLocalStorage();
 }
 
 document.addEventListener('click', () => {
@@ -284,27 +464,6 @@ chrome.runtime.onMessage.addListener(function (message) {
   }
 });
 
-// Initialize on page load and resize
+// Initialize on page load
 window.addEventListener('load', () => init());
 window.addEventListener('resize', () => init());
-
-// Add mutation observers to catch DOM changes
-const observer = new MutationObserver(() => {
-  const diceRollerOpen = document.querySelector('.dice-roller--open');
-  if (diceRollerOpen) {
-    init();
-    observer.observe(diceRollerOpen, {
-      attributes: true,
-      childList: true,
-      subtree: true,
-    });
-  }
-});
-
-// Observe body for dice roller changes
-window.addEventListener('load', () => {
-  observer.observe(document.body, {
-    childList: true,
-    subtree: true,
-  });
-});
