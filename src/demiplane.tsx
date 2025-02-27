@@ -1,13 +1,4 @@
 /** @format */
-// Add error handlers at the very start
-window.addEventListener('error', event => {
-  console.error('dddice-demiplane script error:', event.error);
-});
-
-window.addEventListener('unhandledrejection', event => {
-  console.error('dddice-demiplane unhandled promise rejection:', event.reason);
-});
-
 import createLogger from './log';
 import { getStorage, setStorage } from './storage';
 import { IRoll, ThreeDDiceRollEvent, ThreeDDice, ITheme, ThreeDDiceAPI, IUser } from 'dddice-js';
@@ -182,7 +173,7 @@ async function watchLocalStorage(): Promise<void> {
         lastRolls = currentRolls;
       }
     } catch (e) {
-      console.error('Error parsing dice history:', e);
+      log.debug('Error parsing dice history:', e);
     }
   };
 
@@ -240,7 +231,7 @@ async function sendRollRequest(
         checkReady();
       });
     } catch (e) {
-      console.error('Failed to initialize 3D engine:', e);
+      log.error('Failed to initialize 3D engine:', e);
       notify('Failed to initialize 3D engine. Please refresh the page.');
       return;
     }
@@ -266,7 +257,7 @@ async function sendRollRequest(
     const label = getRollNameFromData(originalRoll) + getTypeResultFromData(originalRoll);
     await dddice.api.roll.create(roll, { label: label });
   } catch (e: any) {
-    console.error('Roll creation failed:', e);
+    log.error('Roll creation failed:', e);
     notify(
       `Failed to create roll: ${e.response?.data?.data?.message ?? e.message ?? 'Unknown error'}`,
     );
@@ -288,15 +279,9 @@ async function initializeSDK(): Promise<void> {
 
   log.debug('initializeSDK', renderMode);
   if (dddice) {
-    try {
-      if (canvasElement) canvasElement.remove();
-      if (dddice.api?.disconnect) {
-        await dddice.api.disconnect();
-      }
-      await dddice.stop();
-    } catch (e) {
-      console.error('Error cleaning up previous instance:', e);
-    }
+    if (canvasElement) canvasElement.remove();
+    if (dddice.api?.disconnect) dddice.api.disconnect();
+    dddice.stop();
   }
 
   try {
@@ -308,59 +293,25 @@ async function initializeSDK(): Promise<void> {
       document.body.appendChild(canvasElement);
 
       dddice = new ThreeDDice().initialize(canvasElement, apiKey, undefined, 'Demiplane');
-
-      // Wait for initialization using public methods
-      try {
-        await new Promise<void>((resolve, reject) => {
-          let attempts = 0;
-          const maxAttempts = 50; // 5 seconds total
-          const checkInitialized = () => {
-            try {
-              // Attempt to access a method that requires initialization
-              dddice.clear();
-              resolve();
-            } catch (e) {
-              if (attempts >= maxAttempts) {
-                reject(new Error('Initialization timeout'));
-              } else {
-                attempts++;
-                setTimeout(checkInitialized, 100);
-              }
-            }
-          };
-          checkInitialized();
-        });
-      } catch (e) {
-        const error = e as Error;
-        throw new Error('Failed to initialize ThreeDDice: ' + error.message);
-      }
-
       dddice.on(ThreeDDiceRollEvent.RollFinished, (roll: IRoll) => notifyRollFinished(roll));
-      await dddice.start();
-
+      dddice.start();
       if (room?.slug) {
-        await dddice.connect(room.slug);
+        dddice.connect(room.slug);
       }
     } else {
       dddice = new ThreeDDice();
       dddice.api = new ThreeDDiceAPI(apiKey, 'Demiplane');
       if (room?.slug) {
-        await dddice.api.connect(room.slug);
+        dddice.api.connect(room.slug);
       }
       dddice.api?.listen(ThreeDDiceRollEvent.RollCreated, (roll: IRoll) =>
         setTimeout(() => notifyRollCreated(roll), 1500),
       );
     }
-
-    if (theme) {
-      await preloadTheme(theme);
-    }
+    if (theme) preloadTheme(theme);
   } catch (e: any) {
-    console.error('SDK initialization failed:', e);
-    notify(
-      `Failed to initialize: ${e.response?.data?.data?.message ?? e.message ?? 'Unknown error'}`,
-    );
-    throw e;
+    log.debug(e);
+    notify(`${e.response?.data?.data?.message ?? e}`);
   }
 }
 
@@ -394,13 +345,13 @@ function preloadTheme(theme: ITheme): Promise<void> {
     dddice.loadThemeResources(theme.id, true);
     return Promise.resolve();
   } catch (e) {
-    console.error('Error preloading theme:', e);
+    log.debug('Error preloading theme:', e);
     return Promise.reject(e);
   }
 }
 
 async function init() {
-  if (!/\/nexus\/[^/]+\/character-sheet\/.+/.test(window.location.pathname)) {
+  if (!/^\/(nexus\/daggerheart\/character-sheet\/.+)/.test(window.location.pathname)) {
     log.debug('uninit');
     const currentCanvas = document.getElementById('dddice-canvas');
     if (currentCanvas) {
@@ -409,12 +360,10 @@ async function init() {
     }
     return;
   }
-  log.debug('Initializing dddice extension');
   log.debug('init');
 
   // Initialize SDK if not already initialized
   if (!dddice?.api) {
-    log.debug('Initializing SDK');
     await initializeSDK();
   }
 
@@ -430,7 +379,7 @@ async function init() {
   const characterName = document.querySelector<HTMLElement>(
     '.MuiGrid-root.MuiGrid-item.text-block.character-name.css-1ipveys .text-block__text.MuiBox-root.css-1dyfylb',
   )?.textContent;
-  console.log('characterName', characterName);
+
   const userParticipant = room?.participants.find(
     ({ user: { uuid: participantUuid } }) => participantUuid === user.uuid,
   );
