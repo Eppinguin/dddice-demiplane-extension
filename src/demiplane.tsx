@@ -19,6 +19,8 @@ Notify.init({
 let dddice: ThreeDDice;
 let canvasElement: HTMLCanvasElement;
 let user: IUser;
+let isInitialized = false; // Track initialization state
+let watchingStorage = false; // Track if we're already watching storage
 
 interface DiceRoll {
   type: string;
@@ -140,6 +142,12 @@ async function watchLocalStorage(): Promise<void> {
     return;
   }
 
+  // If we're already watching storage for this session, don't set up another watcher
+  if (watchingStorage) {
+    log.debug('Already watching localStorage');
+    return;
+  }
+
   const characterUuid = match[1];
   const storageKey = `${characterUuid}-dice-history`;
   log.debug('Watching localStorage key:', storageKey);
@@ -177,8 +185,9 @@ async function watchLocalStorage(): Promise<void> {
     }
   };
 
-  // Only set up the interval to watch for future changes
+  // Set up the interval to watch for future changes
   setInterval(checkForNewRolls, 1000);
+  watchingStorage = true; // Mark that we're watching storage
 }
 
 async function sendRollRequest(
@@ -309,6 +318,15 @@ async function initializeSDK(): Promise<void> {
       );
     }
     if (theme) preloadTheme(theme);
+
+    // Mark initialization as complete
+    isInitialized = true;
+    // Store initialization state in extension storage
+    setStorage({ demiplane_initialized: true });
+
+    // Start watching for dice rolls
+    log.debug('Starting localStorage watch from initializeSDK');
+    watchLocalStorage();
   } catch (e: any) {
     log.debug(e);
     notify(`${e.response?.data?.data?.message ?? e}`);
@@ -352,7 +370,7 @@ function preloadTheme(theme: ITheme): Promise<void> {
 
 async function init() {
   if (!/^\/(nexus\/daggerheart\/character-sheet\/.+)/.test(window.location.pathname)) {
-    log.debug('uninit');
+    log.debug('uninit: not on a character sheet page');
     const currentCanvas = document.getElementById('dddice-canvas');
     if (currentCanvas) {
       currentCanvas.remove();
@@ -360,41 +378,57 @@ async function init() {
     }
     return;
   }
-  log.debug('init');
+  log.debug('init: on character sheet page');
 
-  // Initialize SDK if not already initialized
-  if (!dddice?.api) {
-    await initializeSDK();
-  }
+  // Check if we're already initialized with the API ready
+  if (!isInitialized && !dddice?.api) {
+    // Check if previously initialized in storage
+    const initialized = await getStorage('demiplane_initialized');
+    const apiKey = await getStorage('apiKey');
 
-  const room = await getStorage('room');
-  if (!user) {
-    try {
-      user = (await dddice?.api?.user.get())?.data;
-    } catch (e) {
-      log.debug('Failed to get user', e);
+    log.debug('Checking initialization state:', { initialized, apiKeyExists: !!apiKey });
+
+    if (apiKey) {
+      // If API key exists, initialize the SDK
+      await initializeSDK();
     }
+  } else {
+    log.debug('Already initialized, updating state if needed');
+    // We're already initialized, just make sure we're watching localStorage
+    if (!watchingStorage) {
+      log.debug('Starting localStorage watch for dice rolls');
+      watchLocalStorage();
+    }
+
+    // Update character name if needed
+    const room = await getStorage('room');
+    if (!user) {
+      try {
+        user = (await dddice?.api?.user.get())?.data;
+      } catch (e) {
+        log.debug('Failed to get user', e);
+      }
+    }
+
+    const characterName = document.querySelector<HTMLElement>(
+      '.MuiGrid-root.MuiGrid-item.text-block.character-name.css-1ipveys .text-block__text.MuiBox-root.css-1dyfylb',
+    )?.textContent;
+
+    if (room && user && characterName) {
+      const userParticipant = room.participants.find(
+        ({ user: { uuid: participantUuid } }) => participantUuid === user.uuid,
+      );
+
+      if (userParticipant && characterName && userParticipant.username !== characterName) {
+        userParticipant.username = characterName;
+        setStorage({ room });
+        await dddice?.api?.room.updateParticipant(room.slug, userParticipant.id, {
+          username: characterName,
+        });
+      }
+    }
+    if (dddice?.canvas) dddice.resize(window.innerWidth, window.innerHeight);
   }
-
-  const characterName = document.querySelector<HTMLElement>(
-    '.MuiGrid-root.MuiGrid-item.text-block.character-name.css-1ipveys .text-block__text.MuiBox-root.css-1dyfylb',
-  )?.textContent;
-
-  const userParticipant = room?.participants.find(
-    ({ user: { uuid: participantUuid } }) => participantUuid === user.uuid,
-  );
-
-  if (characterName && userParticipant?.username != characterName) {
-    userParticipant.username = characterName;
-    setStorage({ room });
-    await dddice?.api?.room.updateParticipant(room.slug, userParticipant.id, {
-      username: characterName,
-    });
-  }
-
-  // Start watching localStorage for dice rolls
-  log.debug('Starting localStorage watch');
-  watchLocalStorage();
 }
 
 document.addEventListener('click', () => {
@@ -413,6 +447,20 @@ chrome.runtime.onMessage.addListener(function (message) {
   }
 });
 
-// Initialize on page load
+// Initialize on page load and resize
 window.addEventListener('load', () => init());
 window.addEventListener('resize', () => init());
+
+// Also initialize when the script first runs
+init();
+
+// Add listener for URL changes (for single-page app navigation)
+let lastUrl = window.location.href;
+new MutationObserver(() => {
+  const currentUrl = window.location.href;
+  if (currentUrl !== lastUrl) {
+    lastUrl = currentUrl;
+    log.debug('URL changed, reinitializing extension');
+    init();
+  }
+}).observe(document, { subtree: true, childList: true });
