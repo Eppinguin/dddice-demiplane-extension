@@ -25,6 +25,7 @@ let watchingStorage = false; // Track if we're already watching storage
 enum GameSystem {
   DAGGERHEART = 'daggerheart',
   PATHFINDER = 'pathfinder',
+  COSMERERPG = 'cosmererpg',
   UNKNOWN = 'unknown',
 }
 
@@ -33,13 +34,145 @@ interface GameConfig {
   storageKeyPattern: string;
   getRollName: (roll: DiceRoll) => string;
   getTypeResult: (roll: DiceRoll) => string;
-  processDice: (roll: DiceRoll) => Array<{
-    type: string;
-    value: number;
-    theme: string | undefined;
-    label?: string;
-  }>;
+  processDice: (roll: DiceRoll) =>
+    | Array<{
+        type: string;
+        value: number;
+        theme: string | undefined;
+        label?: string;
+        groupSlug?: string;
+      }>
+    | {
+        dice: Array<{
+          type: string;
+          value: number;
+          theme: string | undefined;
+          label?: string;
+          groupSlug?: string;
+        }>;
+        operator: object;
+      };
   getCharacterNameSelector?: string;
+}
+
+interface ModifierEntry {
+  value: number | string;
+  purpose: string;
+  rollString: string;
+}
+
+interface DiceRoll {
+  // Common properties
+  name: string;
+  type?: string;
+
+  // Cosmere/Daggerheart specific properties
+  dice?: Array<{
+    slug: string;
+    die: string;
+    type?: string; // Add this for kh/kl support
+    label: string;
+    image: string;
+    pooledImage: string;
+  }>;
+  roll?: string;
+  modifiersParsed?: ModifierEntry[] | ModifierEntry[][] | ModifierEntry;
+  rerolled?: boolean;
+
+  // Cosmere specific
+  results?: Array<{
+    dice: Array<{
+      id: number;
+      die: string;
+      value: number;
+      maxValue: number;
+      slug: string;
+      is_kept: boolean;
+      groupSlug?: string;
+      config: {
+        priority: number;
+        dieSlug: string;
+        slug: string;
+        image: string;
+        rerollable: boolean;
+        name: string;
+        isNegative?: boolean;
+        overrideValue?: number;
+      };
+    }>;
+    total: number;
+    maxTotal: number;
+    crit: number;
+    status?: {
+      priority: number;
+      slug: string;
+      label: string;
+      conditions: Array<any>;
+    };
+  }>;
+
+  // Pathfinder specific properties
+  origin?: string;
+
+  // Result can have different structures
+  result: {
+    // Daggerheart/Cosmere structure
+    dice?: Array<{
+      id: number;
+      die: string;
+      value: number;
+      maxValue: number;
+      slug: string;
+      is_kept: boolean;
+      originalValue?: number;
+      config: {
+        priority: number;
+        dieSlug: string;
+        slug: string;
+        image: string;
+        rerollable: boolean;
+        name: string;
+        isNegative?: boolean;
+        overrideValue?: number;
+      };
+    }>;
+
+    // Common properties
+    total: number;
+    maxTotal?: number;
+    crit?: number;
+    status?: {
+      priority: number;
+      slug: string;
+      label: string;
+      conditions: Array<any>;
+    };
+
+    // Pathfinder specific
+    raw_dice?: {
+      parts: Array<{
+        type: string;
+        value: number;
+        annotation?: string;
+        is_crit?: number;
+        text?: string;
+        operators?: Array<any>;
+        dice?: Array<{
+          type: string;
+          value: number;
+          size: number;
+          is_kept: boolean;
+          rolls: Array<number>;
+          exploded: boolean;
+          imploded: boolean;
+        }>;
+        num_kept?: number;
+        num_dice?: number;
+        dice_size?: number;
+      }>;
+    };
+    error?: string;
+  };
 }
 
 const gameConfigs: Record<GameSystem, GameConfig> = {
@@ -47,21 +180,24 @@ const gameConfigs: Record<GameSystem, GameConfig> = {
     pathRegex: /^\/nexus\/daggerheart\/character-sheet\/([^/]+)/,
     storageKeyPattern: '{uuid}-dice-history',
     getRollName: roll => {
-      const purposeModifier = roll.modifiersParsed.find(m => m.purpose === 'misc');
-      const nameModifier = roll.modifiersParsed[2]; // Based on the example, this seems to be where the ability/spell name is
-
-      if (purposeModifier?.value && nameModifier?.value) {
-        return `${purposeModifier.value}: ${nameModifier.value}`;
+      if (!Array.isArray(roll.modifiersParsed)) {
+        const mod = roll.modifiersParsed as ModifierEntry | undefined;
+        if (mod?.purpose === 'misc') {
+          const nameModifier = roll.modifiersParsed;
+          if (nameModifier && typeof nameModifier === 'object' && 'value' in nameModifier) {
+            return `${nameModifier.value}`;
+          }
+        }
       }
       return roll.name;
     },
     getTypeResult: roll => {
-      if (roll.result.status.slug === 'critical-success') {
+      if (roll?.result?.status?.slug === 'critical-success') {
         return ' Critical Success!';
       }
 
-      const hasFear = roll.dice.some(d => d.slug === 'fear');
-      const hasHope = roll.dice.some(d => d.slug === 'hope');
+      const hasFear = roll.dice?.some(d => d.slug === 'fear');
+      const hasHope = roll.dice?.some(d => d.slug === 'hope');
 
       if (hasFear) return ' with Fear';
       if (hasHope) return ' with Hope';
@@ -71,25 +207,43 @@ const gameConfigs: Record<GameSystem, GameConfig> = {
       const diceArray = [];
 
       roll.result.dice.forEach(die => {
-        const value = die.config.isNegative ? -die.value : die.value;
+        // const value = die.config.isNegative ? -die.value : die.value;
         const label = die.config.name;
+        log.debug('Processing die:', die);
 
         diceArray.push({
           type: die.value > 0 ? die.die : 'mod',
-          value,
+          value: die.value,
           theme: undefined, // Will be set in sendRollRequest based on die type
           label,
         });
       });
 
       // Add static modifier if present
-      const modifierValue = roll.modifiersParsed.find(m => m.purpose === 'add')?.value;
-      if (typeof modifierValue === 'number' && modifierValue !== 0) {
-        diceArray.push({
-          type: 'mod',
-          value: modifierValue,
-          theme: undefined,
-        });
+      if (roll.modifiersParsed) {
+        if (Array.isArray(roll.modifiersParsed)) {
+          const modifiers = roll.modifiersParsed as ModifierEntry[];
+          const addModifier = modifiers.find(m => m.purpose === 'add');
+          if (addModifier && typeof addModifier.value === 'number' && addModifier.value !== 0) {
+            diceArray.push({
+              type: 'mod',
+              value: addModifier.value,
+              theme: undefined,
+            });
+          }
+        } else if (
+          !Array.isArray(roll.modifiersParsed) &&
+          typeof roll.modifiersParsed === 'object'
+        ) {
+          const mod = roll.modifiersParsed as ModifierEntry;
+          if (mod.purpose === 'add' && typeof mod.value === 'number' && mod.value !== 0) {
+            diceArray.push({
+              type: 'mod',
+              value: mod.value,
+              theme: undefined,
+            });
+          }
+        }
       }
 
       return diceArray;
@@ -132,7 +286,7 @@ const gameConfigs: Record<GameSystem, GameConfig> = {
           for (const die of part.dice) {
             if (die.type === 'single_dice') {
               diceArray.push({
-                type: `d${die.size}`, // d20, d4, etc.
+                type: die.value > 0 ? `d${die.size}` : 'mod', // d20, d4, etc.
                 value: die.value,
                 theme: undefined,
                 label: `${part.num_dice}d${die.size}`,
@@ -153,6 +307,101 @@ const gameConfigs: Record<GameSystem, GameConfig> = {
     },
     getCharacterNameSelector: '.character-name', // Update with the correct selector for Pathfinder
   },
+  [GameSystem.COSMERERPG]: {
+    pathRegex: /^\/nexus\/cosmererpg\/character-sheet\/([^/]+)/,
+    storageKeyPattern: '{uuid}-dice-history',
+    getRollName: roll => {
+      if (Array.isArray(roll.modifiersParsed)) {
+        const firstGroup = roll.modifiersParsed[0];
+        if (Array.isArray(firstGroup)) {
+          const mods = firstGroup as ModifierEntry[];
+          const purposeModifier = mods.find(m => m.purpose === 'misc');
+          const nameModifier = mods.find(
+            m => m.purpose === 'misc' && m.value !== purposeModifier?.value,
+          );
+
+          if (purposeModifier?.value && nameModifier?.value) {
+            return `${purposeModifier.value}: ${nameModifier.value}`;
+          }
+        }
+      }
+      return roll.name;
+    },
+    getTypeResult: roll => {
+      if (roll?.result?.status?.slug === 'opportunity') {
+        return ' Opportunity!';
+      }
+      return '';
+    },
+    processDice: roll => {
+      const diceArray = [];
+      let operator = {};
+
+      // Check if any dice in the roll need kh/kl operators
+      if (roll.dice && roll.dice.length > 0) {
+        const hasKeepHighest = roll.dice.some(d => d.type === 'kh');
+        const hasKeepLowest = roll.dice.some(d => d.type === 'kl');
+        if (hasKeepHighest) {
+          operator = { k: 'h1' };
+        } else if (hasKeepLowest) {
+          operator = { k: 'l1' };
+        }
+      }
+
+      // Handle main dice
+      if (roll.results) {
+        roll.results.forEach((result, index) => {
+          result.dice.forEach(die => {
+            const label = die.config.name;
+            const isPlotDie = die.slug === 'plot';
+            const groupSlug = die.groupSlug || (index === 0 ? 'main-d20-group' : 'damage-group');
+
+            diceArray.push({
+              type: die.value < 0 ? 'mod' : isPlotDie ? 'd6' : die.die,
+              value: die.value,
+              theme: undefined,
+              label: label,
+              groupSlug: groupSlug,
+            });
+          });
+
+          // Add modifiers for this result group
+          if (roll.modifiersParsed && Array.isArray(roll.modifiersParsed)) {
+            const modGroups = roll.modifiersParsed as ModifierEntry[][];
+            const modGroup = modGroups[index];
+            if (Array.isArray(modGroup)) {
+              const addModifier = modGroup.find(m => m.purpose === 'add');
+              if (addModifier && typeof addModifier.value === 'number' && addModifier.value !== 0) {
+                diceArray.push({
+                  type: 'mod',
+                  value: addModifier.value,
+                  theme: undefined,
+                  groupSlug: index === 0 ? 'main-d20-group' : 'damage-group',
+                });
+              }
+            }
+          }
+        });
+      } else if (roll.result.dice) {
+        roll.result.dice.forEach(die => {
+          const value = die.config.isNegative ? -die.value : die.value;
+          const label = die.config.name;
+          const isPlotDie = die.slug === 'plot';
+
+          diceArray.push({
+            type: isPlotDie ? 'd6' : die.die,
+            value: value,
+            theme: undefined,
+            label: label,
+          });
+        });
+      }
+
+      return { dice: diceArray, operator };
+    },
+    getCharacterNameSelector:
+      '.MuiGrid-root.MuiGrid-item.text-block.character-name .text-block__text.MuiBox-root',
+  },
   [GameSystem.UNKNOWN]: {
     pathRegex: /^\/nexus\/([^/]+)\/character-sheet\/([^/]+)/,
     storageKeyPattern: '{uuid}-dice-history',
@@ -162,24 +411,27 @@ const gameConfigs: Record<GameSystem, GameConfig> = {
       const diceArray = [];
 
       roll.result.dice.forEach(die => {
-        const value = die.config.isNegative ? -die.value : die.value;
-
+        // const value = die.config.isNegative ? -die.value : die.value;
+        log.debug('Processing die:', die);
         diceArray.push({
           type: die.value > 0 ? die.die : 'mod',
-          value,
+          value: die.value,
           theme: undefined,
         });
       });
 
       // Add static modifier if present
-      const modifierValue = roll.modifiersParsed.find(m => m.purpose === 'add')?.value;
-      if (typeof modifierValue === 'number' && modifierValue !== 0) {
-        diceArray.push({
-          type: 'mod',
-          value: modifierValue,
-          theme: undefined,
-        });
-      }
+      // if (roll.modifiersParsed && Array.isArray(roll.modifiersParsed)) {
+      //   const modifiers = roll.modifiersParsed as ModifierEntry[];
+      //   const addModifier = modifiers.find(m => m.purpose === 'add');
+      //   if (addModifier && typeof addModifier.value === 'number' && addModifier.value !== 0) {
+      //     diceArray.push({
+      //       type: 'mod',
+      //       value: addModifier.value,
+      //       theme: undefined,
+      //     });
+      //   }
+      // }
 
       return diceArray;
     },
@@ -206,94 +458,6 @@ function detectGameSystem(): { system: GameSystem; uuid: string | null } {
   return { system: GameSystem.UNKNOWN, uuid: null };
 }
 
-interface DiceRoll {
-  // Common properties
-  name: string;
-  type?: string;
-
-  // Daggerheart specific properties
-  dice?: Array<{
-    slug: string;
-    die: string;
-    label: string;
-    image: string;
-    pooledImage: string;
-  }>;
-  roll?: string;
-  modifiersParsed?: Array<{
-    value: number | string;
-    purpose: string;
-    rollString: string;
-  }>;
-  rerolled?: boolean;
-
-  // Pathfinder specific properties
-  origin?: string;
-
-  // Result can have different structures
-  result: {
-    // Daggerheart structure
-    dice?: Array<{
-      id: number;
-      die: string;
-      value: number;
-      maxValue: number;
-      slug: string;
-      is_kept: boolean;
-      originalValue?: number;
-      config: {
-        priority: number;
-        dieSlug: string;
-        slug: string;
-        image: string;
-        rerollable: boolean;
-        name: string;
-        isNegative?: boolean;
-      };
-    }>;
-
-    // Common properties
-    total: number;
-
-    // Daggerheart specific
-    maxTotal?: number;
-    crit?: number;
-    status?: {
-      priority: number;
-      slug: string;
-      label: string;
-      conditions: Array<any>;
-    };
-
-    // Pathfinder specific
-    raw_dice?: {
-      parts: Array<{
-        type: string;
-        value: number;
-        annotation?: string;
-        is_crit?: number;
-        text?: string;
-        operators?: Array<any>;
-
-        // For dice type
-        dice?: Array<{
-          type: string;
-          value: number;
-          size: number;
-          is_kept: boolean;
-          rolls: Array<number>;
-          exploded: boolean;
-          imploded: boolean;
-        }>;
-        num_kept?: number;
-        num_dice?: number;
-        dice_size?: number;
-      }>;
-    };
-    error?: string;
-  };
-}
-
 function processRoll(roll: DiceRoll): void {
   log.debug('Processing roll:', {
     name: roll.name,
@@ -306,10 +470,13 @@ function processRoll(roll: DiceRoll): void {
   const { system } = detectGameSystem();
   currentGameSystem = system;
 
-  const diceArray = gameConfigs[system].processDice(roll);
+  const result = gameConfigs[system].processDice(roll);
+  const diceArray = Array.isArray(result) ? result : result.dice;
+  const operator = Array.isArray(result) ? {} : result.operator;
 
   log.debug('Prepared dice array for 3D roll:', diceArray);
-  sendRollRequest(diceArray, roll);
+  log.debug('Prepared operator for 3D roll:', operator);
+  sendRollRequest(diceArray, roll, operator);
 }
 
 async function watchLocalStorage(): Promise<void> {
@@ -388,8 +555,15 @@ async function watchLocalStorage(): Promise<void> {
 }
 
 async function sendRollRequest(
-  roll: Array<{ type: string; value: number; theme: string | undefined; label?: string }>,
+  roll: Array<{
+    type: string;
+    value: number;
+    theme: string | undefined;
+    label?: string;
+    groupSlug?: string;
+  }>,
   originalRoll: DiceRoll,
+  operator = {},
 ): Promise<void> {
   const [room, defaultTheme, hopeTheme, fearTheme] = await Promise.all([
     getStorage('room'),
@@ -420,9 +594,7 @@ async function sendRollRequest(
         let attempts = 0;
         const maxAttempts = 50; // 5 seconds total
         const checkReady = () => {
-          // Use a try-catch to check if the engine is ready
           try {
-            // Attempt to access a method that requires initialization
             dddice.clear();
             resolve();
           } catch (e) {
@@ -448,7 +620,6 @@ async function sendRollRequest(
     // Assign themes based on game system and die type
     roll.forEach(die => {
       if (currentGameSystem === GameSystem.DAGGERHEART) {
-        // Daggerheart-specific theme assignment
         if (die.label === 'Hope') {
           die.theme = hopeTheme?.id;
         } else if (die.label === 'Fear') {
@@ -457,7 +628,6 @@ async function sendRollRequest(
           die.theme = defaultTheme?.id;
         }
       } else {
-        // Default theme for other game systems
         die.theme = defaultTheme?.id;
       }
     });
@@ -467,10 +637,32 @@ async function sendRollRequest(
     }
 
     const { system } = detectGameSystem();
-    const label =
-      gameConfigs[system].getRollName(originalRoll) +
-      gameConfigs[system].getTypeResult(originalRoll);
-    await dddice.api.roll.create(roll, { label: label });
+    const config = gameConfigs[system];
+
+    // If this is a Cosmere roll and we have multiple results, create separate rolls
+    if (
+      system === GameSystem.COSMERERPG &&
+      originalRoll.results &&
+      originalRoll.results.length > 1
+    ) {
+      const baseLabel = config.getRollName(originalRoll);
+
+      // Create attack roll
+      const attackDice = roll.filter(die => die.groupSlug === 'main-d20-group' || !die.groupSlug);
+      if (attackDice.length > 0) {
+        await dddice.api.roll.create(attackDice, { label: `${baseLabel} (Attack)` });
+      }
+
+      // Create damage roll - include operator here since that's where kh/kl is used
+      const damageDice = roll.filter(die => die.groupSlug === 'damage-group');
+      if (damageDice.length > 0) {
+        await dddice.api.roll.create(damageDice, { label: `${baseLabel} (Damage)`, operator });
+      }
+    } else {
+      // For all other rolls, proceed as normal
+      const label = config.getRollName(originalRoll) + config.getTypeResult(originalRoll);
+      await dddice.api.roll.create(roll, { label: label, operator });
+    }
   } catch (e: any) {
     log.error('Roll creation failed:', e);
     notify(
