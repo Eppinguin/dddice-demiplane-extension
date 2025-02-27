@@ -23,6 +23,11 @@ import Toggle from './components/Toggle';
 import { CustomConfiguration } from './schema/custom_configuration';
 import CodeActivationScreen from './ts/Partials/CodeActivationScreen';
 
+// Game system enum that matches the one in demiplane.tsx
+enum GameSystem {
+  DAGGERHEART = 'daggerheart',
+}
+
 export interface IStorage {
   apiKey?: string;
   room?: IRoom;
@@ -30,8 +35,9 @@ export interface IStorage {
   themes?: ITheme[];
   rooms?: IRoom[];
   renderMode: boolean;
-  hopeTheme?: ITheme; // New property for Hope theme
-  fearTheme?: ITheme; // New property for Fear theme
+  hopeTheme?: ITheme; // Daggerheart specific
+  fearTheme?: ITheme; // Daggerheart specific
+  gameSystem?: GameSystem; // Track current game system
   loaded: boolean;
 }
 
@@ -42,8 +48,9 @@ export const DefaultStorage: IStorage = {
   themes: undefined,
   rooms: undefined,
   renderMode: true,
-  hopeTheme: undefined, // New property for Hope theme
-  fearTheme: undefined, // New property for Fear theme
+  hopeTheme: undefined,
+  fearTheme: undefined,
+  gameSystem: undefined,
   loaded: false,
 };
 
@@ -116,9 +123,21 @@ const DddiceSettings = (props: DddiceSettingsProps) => {
     connect();
   }, []);
 
+  // Detect the game system from URL or storage
+  useEffect(() => {
+    async function detectGameSystem() {
+      // Try to get game system from storage first
+      const gameSystem = await storageProvider.getStorage('gameSystem');
+      if (gameSystem) {
+        setState(state => ({ ...state, gameSystem }));
+      }
+    }
+    detectGameSystem();
+  }, []);
+
   useEffect(() => {
     async function initStorage() {
-      const [apiKey, room, theme, rooms, themes, renderMode, hopeTheme, fearTheme] =
+      const [apiKey, room, theme, rooms, themes, renderMode, hopeTheme, fearTheme, gameSystem] =
         await Promise.all([
           storageProvider.getStorage('apiKey'),
           storageProvider.getStorage('room'),
@@ -126,8 +145,9 @@ const DddiceSettings = (props: DddiceSettingsProps) => {
           storageProvider.getStorage('rooms'),
           storageProvider.getStorage('themes'),
           storageProvider.getStorage('render mode'),
-          storageProvider.getStorage('hopeTheme'), // Load Hope theme
-          storageProvider.getStorage('fearTheme'), // Load Fear theme
+          storageProvider.getStorage('hopeTheme'),
+          storageProvider.getStorage('fearTheme'),
+          storageProvider.getStorage('gameSystem'),
         ]);
 
       setState((storage: IStorage) => ({
@@ -140,6 +160,7 @@ const DddiceSettings = (props: DddiceSettingsProps) => {
         renderMode: renderMode === undefined ? true : renderMode,
         hopeTheme, // Set Hope theme
         fearTheme, // Set Fear theme
+        gameSystem,
         loaded: true,
       }));
     }
@@ -401,6 +422,8 @@ const DddiceSettings = (props: DddiceSettingsProps) => {
     storageProvider.removeStorage('rooms');
     storageProvider.removeStorage('themes');
     storageProvider.removeStorage('activate');
+    storageProvider.removeStorage('hopeTheme');
+    storageProvider.removeStorage('fearTheme');
     setError(undefined);
     clearLoading();
   }, []);
@@ -430,6 +453,61 @@ const DddiceSettings = (props: DddiceSettingsProps) => {
       }
     }
   }, [state]);
+
+  // Render the appropriate theme selectors based on game system
+  const renderGameSpecificThemeSelectors = () => {
+    switch (state.gameSystem) {
+      case GameSystem.DAGGERHEART:
+        return (
+          <>
+            <div className="text-white text-lg font-bold mt-4 mb-2">Daggerheart Special Dice</div>
+            {/* Hope Theme */}
+            <div className="py-1">
+              <div className="text-gray-400 text-sm mb-1">
+                Hope Die Theme (6-sided die with vine symbol)
+              </div>
+              {!state.hopeTheme ? (
+                <ThemeSelection
+                  themes={state.themes}
+                  onSelectTheme={onChangeHopeTheme}
+                  onConnectAccount={() => setIsEnterApiKey(true)}
+                  onRefreshThemes={refreshThemes}
+                />
+              ) : (
+                <Theme
+                  theme={state.hopeTheme}
+                  onSwitchTheme={() => onChangeHopeTheme(undefined)}
+                  label="Hope Die"
+                />
+              )}
+            </div>
+            {/* Fear Theme */}
+            <div className="py-1">
+              <div className="text-gray-400 text-sm mb-1">
+                Fear Die Theme (6-sided die with skull symbol)
+              </div>
+              {!state.fearTheme ? (
+                <ThemeSelection
+                  themes={state.themes}
+                  onSelectTheme={onChangeFearTheme}
+                  onConnectAccount={() => setIsEnterApiKey(true)}
+                  onRefreshThemes={refreshThemes}
+                />
+              ) : (
+                <Theme
+                  theme={state.fearTheme}
+                  onSwitchTheme={() => onChangeFearTheme(undefined)}
+                  label="Fear Die"
+                />
+              )}
+            </div>
+          </>
+        );
+
+      default:
+        return null;
+    }
+  };
 
   /**
    * Render
@@ -507,12 +585,15 @@ const DddiceSettings = (props: DddiceSettingsProps) => {
                     onRefreshRooms={refreshRooms}
                   />
                 ) : !state.theme ? (
-                  <ThemeSelection
-                    themes={state.themes}
-                    onSelectTheme={onChangeTheme}
-                    onConnectAccount={() => setIsEnterApiKey(true)}
-                    onRefreshThemes={refreshThemes}
-                  />
+                  <>
+                    <div className="text-white text-lg font-bold mt-4 mb-2">Select Default Dice Theme</div>
+                    <ThemeSelection
+                      themes={state.themes}
+                      onSelectTheme={onChangeTheme}
+                      onConnectAccount={() => setIsEnterApiKey(true)}
+                      onRefreshThemes={refreshThemes}
+                    />
+                  </>
                 ) : (
                   <>
                     <Room
@@ -520,33 +601,12 @@ const DddiceSettings = (props: DddiceSettingsProps) => {
                       onSwitchRoom={onSwitchRoom}
                       disabled={!permissionProvider.canChangeRoom()}
                     />
-                    <Theme theme={state.theme} onSwitchTheme={onSwitchTheme} />
-                    {!state.hopeTheme ? (
-                      <ThemeSelection
-                        themes={state.themes}
-                        onSelectTheme={onChangeHopeTheme}
-                        onConnectAccount={() => setIsEnterApiKey(true)}
-                        onRefreshThemes={refreshThemes}
-                      />
-                    ) : (
-                      <Theme
-                        theme={state.hopeTheme}
-                        onSwitchTheme={() => onChangeHopeTheme(undefined)}
-                      />
-                    )}
-                    {!state.fearTheme ? (
-                      <ThemeSelection
-                        themes={state.themes}
-                        onSelectTheme={onChangeFearTheme}
-                        onConnectAccount={() => setIsEnterApiKey(true)}
-                        onRefreshThemes={refreshThemes}
-                      />
-                    ) : (
-                      <Theme
-                        theme={state.fearTheme}
-                        onSwitchTheme={() => onChangeFearTheme(undefined)}
-                      />
-                    )}
+                    <div className="text-white text-lg font-bold mt-4 mb-2">Default Dice Theme</div>
+                    <Theme theme={state.theme} onSwitchTheme={onSwitchTheme} label="Default" />
+
+                    {/* Render game-specific theme selectors */}
+                    {renderGameSpecificThemeSelectors()}
+
                     <div className="py-3 flex items-center justify-between">
                       <span className="text-lg font-bold text-gray-300 flex-1">Render Dice</span>
                       <div>

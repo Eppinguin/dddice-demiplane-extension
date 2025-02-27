@@ -11,18 +11,19 @@ import ThemeCard from './ThemeCard';
 interface IThemeProps {
   theme: ITheme;
   onSwitchTheme();
+  label?: string; // Add label property to the interface
 }
 
 const Theme = (props: IThemeProps) => {
   const [isCopied, setIsCopied] = useState(false);
 
-  const { theme, onSwitchTheme } = props;
+  const { theme, onSwitchTheme, label } = props;
   if (theme) {
     return (
       <div className="text-white">
         <div className="mt-3 flex grid gap-4 grid-cols-3">
           <div></div>
-          <div className="flex flex-row text-xl my-auto justify-center">Dice</div>
+          <div className="flex flex-row text-xl my-auto justify-center">{label || 'Dice'}</div>
           {/*isCopied ? (
             <div className="text-neon-green text-xxs ml-auto my-auto"> copied to clipboard</div>
           ) : (

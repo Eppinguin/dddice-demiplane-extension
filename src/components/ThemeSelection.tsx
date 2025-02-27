@@ -29,7 +29,7 @@ const ThemeSelection = (props: IThemes) => {
     <div className="text-white flex flex-col">
       <div className="mt-3 flex">
         <div className="flex mr-auto">{''}</div>
-        <div className="flex flex-row text-xl my-auto justify-center">Choose Your Dice</div>
+        <div className="flex flex-row text-xl my-auto justify-center">Select a Theme</div>
         <span onClick={onRefreshThemes} className="ml-auto">
           <Refresh data-tip="refresh dice box" className="flex h-4 w-4" />
         </span>
