@@ -726,7 +726,7 @@ async function sendRollRequest(
             (!die.groupSlug && die.groupSlug !== 'damage-group'),
         );
         if (attackDice.length > 0) {
-          await dddice.api.roll.create(attackDice, { label: `${baseLabel} (Attack)` });
+          await dddice.api.roll.create(attackDice, { label: `${baseLabel} (Attack)`, operator });
         }
 
         // Create damage roll - include operator here since that's where kh/kl is used
