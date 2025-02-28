@@ -203,12 +203,12 @@ const gameConfigs: Record<GameSystem, GameConfig> = {
       if (roll?.result?.status?.slug === 'critical-success') {
         return ' Critical Success!';
       }
-
-      const hasFear = roll.dice?.some(d => d.slug === 'fear');
-      const hasHope = roll.dice?.some(d => d.slug === 'hope');
-
-      if (hasFear) return ' with Fear';
-      if (hasHope) return ' with Hope';
+      if (roll?.result?.status?.slug === 'roll-with-hope') {
+        return ' with Hope';
+      }
+      if (roll?.result?.status?.slug === 'roll-with-fear') {
+        return ' with Fear';
+      }
       return '';
     },
     processDice: roll => {
@@ -469,31 +469,64 @@ const gameConfigs: Record<GameSystem, GameConfig> = {
   [GameSystem.UNKNOWN]: {
     pathRegex: /^\/nexus\/([^/]+)\/character-sheet\/([^/]+)/,
     storageKeyPattern: '{uuid}-dice-history',
-    getRollName: roll => roll.name,
+    getRollName: roll => roll.name + (roll.origin ? ` (${roll.origin})` : ''),
     getTypeResult: () => '',
     processDice: roll => {
       const diceArray = [];
 
-      roll.result.dice.forEach(die => {
-        // const value = die.config.isNegative ? -die.value : die.value;
-        log.debug('Processing die:', die);
-        diceArray.push({
-          type: die.value > 0 ? die.die : 'mod',
-          value: die.value,
-          theme: undefined,
-        });
-      });
+      // Handle the new structure with raw_dice
+      if (roll?.result?.raw_dice?.parts) {
+        let lastOperator = '+'; // Default operator is addition
 
-      // Add static modifier if present
-      if (roll.modifiersParsed && Array.isArray(roll.modifiersParsed)) {
-        const modifiers = roll.modifiersParsed as ModifierEntry[];
-        const addModifier = modifiers.find(m => m.purpose === 'add');
-        if (addModifier && typeof addModifier.value === 'number' && addModifier.value !== 0) {
+        // Process each part of the roll (dice, operators, constants)
+        for (const part of roll.result.raw_dice.parts) {
+          if (part.type === 'dice') {
+            // Process all dice in this part
+            for (const die of part.dice) {
+              if (die.type === 'single_dice') {
+                diceArray.push({
+                  type: `d${die.size}`, // d6, d20, etc.
+                  value: die.value,
+                  theme: undefined,
+                  label: `${part.num_dice}d${die.size}`,
+                });
+              }
+            }
+          } else if (part.type === 'operator' && typeof part.value === 'string' && part.value) {
+            // Store the last non-empty string operator
+            lastOperator = part.value;
+          } else if (part.type === 'constant') {
+            // Add modifiers as static values, applying the last operator
+            diceArray.push({
+              type: 'mod',
+              value: lastOperator === '-' ? -part.value : part.value,
+              theme: undefined,
+            });
+          }
+        }
+      }
+      // Handle the original structure
+      else if (roll?.result?.dice) {
+        roll.result.dice.forEach(die => {
+          log.debug('Processing die:', die);
           diceArray.push({
-            type: 'mod',
-            value: addModifier.value,
+            type: die.value > 0 ? die.die : 'mod',
+            value: die.value,
             theme: undefined,
           });
+        });
+
+        // Add static modifier if present
+        if (roll.modifiersParsed && Array.isArray(roll.modifiersParsed)) {
+          const modifiers = roll.modifiersParsed as ModifierEntry[];
+          const addModifier = modifiers.find(m => m.purpose === 'add');
+          if (addModifier && typeof addModifier.value === 'number' && addModifier.value !== 0) {
+            diceArray.push({
+              type: 'mod',
+              value: addModifier.value,
+              theme: undefined,
+            });
+          }
         }
       }
 
@@ -561,25 +594,52 @@ async function watchLocalStorage(): Promise<void> {
     return;
   }
 
-  const storageKey = gameConfigs[system].storageKeyPattern.replace('{uuid}', uuid);
-  log.debug(`Watching localStorage key: ${storageKey} for game system: ${system}`);
+  // For Unknown system, try both storage key patterns
+  const storageKeys =
+    system === GameSystem.UNKNOWN
+      ? [
+          gameConfigs[system].storageKeyPattern.replace('{uuid}', uuid),
+          '{uuid}-dicerolls'.replace('{uuid}', uuid),
+        ]
+      : [gameConfigs[system].storageKeyPattern.replace('{uuid}', uuid)];
+
+  log.debug(`Watching localStorage keys: ${storageKeys.join(', ')} for game system: ${system}`);
 
   // Initialize lastRolls with current state to prevent rolling on page load
-  const historyString = localStorage.getItem(storageKey);
-  log.debug('Initial localStorage content:', historyString ? 'Found data' : 'No data');
-  let lastRolls: DiceRoll[] | null = historyString ? JSON.parse(historyString) : null;
+  let lastRolls: DiceRoll[] | null = null;
+
+  // Check each storage key for initial data
+  for (const key of storageKeys) {
+    const historyString = localStorage.getItem(key);
+    if (historyString) {
+      lastRolls = JSON.parse(historyString);
+      log.debug(`Found initial data in ${key}`);
+      break;
+    }
+  }
 
   const checkForNewRolls = async () => {
-    const historyString = localStorage.getItem(storageKey);
-    if (!historyString) {
-      log.debug('No dice history found in localStorage for key:', storageKey);
+    let currentRolls: DiceRoll[] | null = null;
+
+    // Check each storage key for new rolls
+    for (const key of storageKeys) {
+      const historyString = localStorage.getItem(key);
+      if (historyString) {
+        try {
+          currentRolls = JSON.parse(historyString);
+          break; // Use the first valid data found
+        } catch (e) {
+          log.debug(`Error parsing dice history from ${key}:`, e);
+        }
+      }
+    }
+
+    if (!currentRolls) {
+      log.debug('No dice history found in any localStorage keys');
       return;
     }
 
     try {
-      const currentRolls: DiceRoll[] = JSON.parse(historyString);
-      // log.debug('Current rolls count:', currentRolls.length);
-
       if (
         !lastRolls ||
         (currentRolls[0] && JSON.stringify(currentRolls[0]) !== JSON.stringify(lastRolls[0]))
@@ -591,18 +651,15 @@ async function watchLocalStorage(): Promise<void> {
             'Processing roll:',
             newestRoll.name,
             'with dice:',
-            // Safely handle dice property which may not exist in Pathfinder
             newestRoll.dice?.map(d => d.die)?.join(', ') || 'no dice array',
           );
           await updateParticipantName();
           processRoll(newestRoll);
         }
         lastRolls = currentRolls;
-      } else {
-        // log.debug('No new rolls detected');
       }
     } catch (e) {
-      log.debug('Error parsing dice history:', e);
+      log.error('Error processing rolls:', e);
     }
   };
 
