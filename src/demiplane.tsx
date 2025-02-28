@@ -51,6 +51,13 @@ interface GameConfig {
           groupSlug?: string;
         }>;
         operator: object;
+        plotDice?: {
+          type: string;
+          value: number;
+          theme: string | undefined;
+          label?: string;
+          groupSlug?: string;
+        };
       };
   getCharacterNameSelector?: string;
 }
@@ -82,6 +89,7 @@ interface DiceRoll {
   // Cosmere specific
   results?: Array<{
     dice: Array<{
+      originalValue: any;
       id: number;
       die: string;
       value: number;
@@ -327,14 +335,45 @@ const gameConfigs: Record<GameSystem, GameConfig> = {
       return roll.name;
     },
     getTypeResult: roll => {
+      // First check for plot die in the dice array
+      const plotDie = roll.dice?.find(d => d.slug === 'plot');
+
+      // Look for plot die value in different possible locations
+      let plotDieValue;
+
+      // Check in roll.results first
+      if (roll.results && roll.results.length > 0) {
+        const plotDieResult = roll.results[0]?.dice.find(d => d.slug === 'plot');
+        plotDieValue = plotDieResult?.originalValue || plotDieResult?.value;
+      }
+
+      // If not found, check in roll.result.dice
+      if (!plotDieValue && roll.result.dice) {
+        const plotDieResult = roll.result.dice.find(d => d.slug === 'plot');
+        plotDieValue = plotDieResult?.originalValue || plotDieResult?.value;
+      }
+
+      if (plotDie && plotDieValue) {
+        if (plotDieValue === 5 || plotDieValue === 6) {
+          return ' with Opportunity!';
+        } else if (plotDieValue === 1 || plotDieValue === 2) {
+          return ' with Complications';
+        }
+      }
+
+      // Check status field as backup
       if (roll?.result?.status?.slug === 'opportunity') {
         return ' Opportunity!';
+      } else if (roll?.result?.status?.slug === 'complication') {
+        return ' Complications';
       }
+
       return '';
     },
     processDice: roll => {
       const diceArray = [];
       let operator = {};
+      let plotDice = null;
 
       // Check if any dice in the roll need kh/kl operators
       if (roll.dice && roll.dice.length > 0) {
@@ -355,13 +394,25 @@ const gameConfigs: Record<GameSystem, GameConfig> = {
             const isPlotDie = die.slug === 'plot';
             const groupSlug = die.groupSlug || (index === 0 ? 'main-d20-group' : 'damage-group');
 
-            diceArray.push({
-              type: die.value < 0 ? 'mod' : isPlotDie ? 'd6' : die.die,
-              value: die.value,
-              theme: undefined,
-              label: label,
-              groupSlug: groupSlug,
-            });
+            // Handle plot die separately
+            if (isPlotDie) {
+              // Store plot die for separate roll
+              plotDice = {
+                type: 'd6',
+                value: die.originalValue || die.value,
+                theme: undefined,
+                label: 'Plot Die',
+                groupSlug: 'plot-die',
+              };
+            } else {
+              diceArray.push({
+                type: die.value < 0 ? 'mod' : die.die,
+                value: die.value,
+                theme: undefined,
+                label: label,
+                groupSlug: groupSlug,
+              });
+            }
           });
 
           // Add modifiers for this result group
@@ -387,16 +438,31 @@ const gameConfigs: Record<GameSystem, GameConfig> = {
           const label = die.config.name;
           const isPlotDie = die.slug === 'plot';
 
-          diceArray.push({
-            type: isPlotDie ? 'd6' : die.die,
-            value: value,
-            theme: undefined,
-            label: label,
-          });
+          if (isPlotDie) {
+            // Store plot die for separate roll
+            plotDice = {
+              type: 'd6',
+              value: die.originalValue || value,
+              theme: undefined,
+              label: 'Plot Die',
+              groupSlug: 'plot-die',
+            };
+          } else {
+            diceArray.push({
+              type: die.die,
+              value: value,
+              theme: undefined,
+              label: label,
+            });
+          }
         });
       }
 
-      return { dice: diceArray, operator };
+      return {
+        dice: diceArray,
+        operator,
+        plotDice,
+      };
     },
     getCharacterNameSelector: '.character-name',
   },
@@ -512,7 +578,7 @@ async function watchLocalStorage(): Promise<void> {
 
     try {
       const currentRolls: DiceRoll[] = JSON.parse(historyString);
-      log.debug('Current rolls count:', currentRolls.length);
+      // log.debug('Current rolls count:', currentRolls.length);
 
       if (
         !lastRolls ||
@@ -533,7 +599,7 @@ async function watchLocalStorage(): Promise<void> {
         }
         lastRolls = currentRolls;
       } else {
-        log.debug('No new rolls detected');
+        // log.debug('No new rolls detected');
       }
     } catch (e) {
       log.debug('Error parsing dice history:', e);
@@ -635,30 +701,78 @@ async function sendRollRequest(
     const { system } = detectGameSystem();
     const config = gameConfigs[system];
 
-    // If this is a Cosmere roll and we have multiple results, create separate rolls
-    if (
-      system === GameSystem.COSMERERPG &&
-      originalRoll.results &&
-      originalRoll.results.length > 1
-    ) {
+    // Special handling for CosmereRPG
+    if (system === GameSystem.COSMERERPG) {
+      const result = config.processDice(originalRoll);
       const baseLabel = config.getRollName(originalRoll);
 
-      // Create attack roll
-      const attackDice = roll.filter(die => die.groupSlug === 'main-d20-group' || !die.groupSlug);
-      if (attackDice.length > 0) {
-        await dddice.api.roll.create(attackDice, { label: `${baseLabel} (Attack)` });
+      // Check if we have multiple results or a plot die
+      let plotDie = null;
+      if (!Array.isArray(result) && result.plotDice) {
+        plotDie = result.plotDice;
+        // Apply theme to plot die
+        plotDie.theme = defaultTheme?.id;
       }
 
-      // Create damage roll - include operator here since that's where kh/kl is used
-      const damageDice = roll.filter(die => die.groupSlug === 'damage-group');
-      if (damageDice.length > 0) {
-        await dddice.api.roll.create(damageDice, { label: `${baseLabel} (Damage)`, operator });
+      // Check if this roll should split attack and damage
+      const shouldSplitRoll = originalRoll.results && originalRoll.results.length > 1;
+
+      // Always check for attack and damage dice for CosmereRPG
+      if (shouldSplitRoll) {
+        // Create attack roll
+        const attackDice = roll.filter(
+          die =>
+            die.groupSlug === 'main-d20-group' ||
+            (!die.groupSlug && die.groupSlug !== 'damage-group'),
+        );
+        if (attackDice.length > 0) {
+          await dddice.api.roll.create(attackDice, { label: `${baseLabel} (Attack)` });
+        }
+
+        // Create damage roll - include operator here since that's where kh/kl is used
+        const damageDice = roll.filter(die => die.groupSlug === 'damage-group');
+        if (damageDice.length > 0) {
+          await dddice.api.roll.create(damageDice, { label: `${baseLabel} (Damage)`, operator });
+        }
+
+        // Send plot die separately if it exists
+        if (plotDie) {
+          await dddice.api.roll.create([plotDie], {
+            label: `${baseLabel}${config.getTypeResult(originalRoll)}`,
+          });
+        }
+      } else {
+        // For single result rolls, handle plot die separately if it exists
+        if (plotDie) {
+          log.debug('Sending plot die:', plotDie);
+          // Send main dice
+          const mainDice = roll.filter(die => die.groupSlug !== 'plot-die');
+          if (mainDice.length > 0) {
+            log.debug('Sending main dice:', mainDice);
+            await dddice.api.roll.create(mainDice, {
+              label: `${baseLabel}${config.getTypeResult(originalRoll)}`,
+              operator,
+            });
+          }
+          // Send plot die separately
+          log.debug('originalRoll:', originalRoll);
+          await dddice.api.roll.create([plotDie], {
+            label: `${baseLabel}${config.getTypeResult(originalRoll)}`,
+          });
+        } else {
+          // No plot die, send as a single roll
+          await dddice.api.roll.create(roll, {
+            label: `${baseLabel}${config.getTypeResult(originalRoll)}`,
+            operator,
+          });
+        }
       }
-    } else {
-      // For all other rolls, proceed as normal
-      const label = config.getRollName(originalRoll) + config.getTypeResult(originalRoll);
-      await dddice.api.roll.create(roll, { label: label, operator });
+      return; // Return early since we've handled this roll
     }
+
+    // For all other systems, proceed as normal
+    const label = config.getRollName(originalRoll) + config.getTypeResult(originalRoll);
+    await dddice.api.roll.create(roll, { label: label, operator });
   } catch (e: any) {
     log.error('Roll creation failed:', e);
     notify(
