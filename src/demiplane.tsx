@@ -248,8 +248,7 @@ const gameConfigs: Record<GameSystem, GameConfig> = {
 
       return diceArray;
     },
-    getCharacterNameSelector:
-      '.MuiGrid-root.MuiGrid-item.text-block.character-name.css-1ipveys .text-block__text.MuiBox-root.css-1dyfylb',
+    getCharacterNameSelector: '.character-name',
   },
   [GameSystem.PATHFINDER]: {
     pathRegex: /^\/nexus\/pathfinder2e\/character-sheet\/([^/]+)/,
@@ -399,8 +398,7 @@ const gameConfigs: Record<GameSystem, GameConfig> = {
 
       return { dice: diceArray, operator };
     },
-    getCharacterNameSelector:
-      '.MuiGrid-root.MuiGrid-item.text-block.character-name .text-block__text.MuiBox-root',
+    getCharacterNameSelector: '.character-name',
   },
   [GameSystem.UNKNOWN]: {
     pathRegex: /^\/nexus\/([^/]+)\/character-sheet\/([^/]+)/,
@@ -421,17 +419,17 @@ const gameConfigs: Record<GameSystem, GameConfig> = {
       });
 
       // Add static modifier if present
-      // if (roll.modifiersParsed && Array.isArray(roll.modifiersParsed)) {
-      //   const modifiers = roll.modifiersParsed as ModifierEntry[];
-      //   const addModifier = modifiers.find(m => m.purpose === 'add');
-      //   if (addModifier && typeof addModifier.value === 'number' && addModifier.value !== 0) {
-      //     diceArray.push({
-      //       type: 'mod',
-      //       value: addModifier.value,
-      //       theme: undefined,
-      //     });
-      //   }
-      // }
+      if (roll.modifiersParsed && Array.isArray(roll.modifiersParsed)) {
+        const modifiers = roll.modifiersParsed as ModifierEntry[];
+        const addModifier = modifiers.find(m => m.purpose === 'add');
+        if (addModifier && typeof addModifier.value === 'number' && addModifier.value !== 0) {
+          diceArray.push({
+            type: 'mod',
+            value: addModifier.value,
+            theme: undefined,
+          });
+        }
+      }
 
       return diceArray;
     },
@@ -506,9 +504,6 @@ async function watchLocalStorage(): Promise<void> {
   let lastRolls: DiceRoll[] | null = historyString ? JSON.parse(historyString) : null;
 
   const checkForNewRolls = async () => {
-    // Re-run init to update character name if needed (this handles character name changes)
-    init();
-
     const historyString = localStorage.getItem(storageKey);
     if (!historyString) {
       log.debug('No dice history found in localStorage for key:', storageKey);
@@ -533,6 +528,7 @@ async function watchLocalStorage(): Promise<void> {
             // Safely handle dice property which may not exist in Pathfinder
             newestRoll.dice?.map(d => d.die)?.join(', ') || 'no dice array',
           );
+          await updateParticipantName();
           processRoll(newestRoll);
         }
         lastRolls = currentRolls;
@@ -672,10 +668,12 @@ async function sendRollRequest(
 }
 
 async function initializeSDK(): Promise<void> {
-  const [apiKey, room, theme, renderMode] = await Promise.all([
+  const [apiKey, room, theme, hopeTheme, fearTheme, renderMode] = await Promise.all([
     getStorage('apiKey'),
     getStorage('room'),
     getStorage('theme'),
+    getStorage('hopeTheme'),
+    getStorage('fearTheme'),
     getStorage('render mode'),
   ]);
 
@@ -717,6 +715,12 @@ async function initializeSDK(): Promise<void> {
     }
     if (theme) preloadTheme(theme);
 
+    // Preload additional themes for Daggerheart if we're on a Daggerheart page
+    if (currentGameSystem === GameSystem.DAGGERHEART) {
+      if (hopeTheme) preloadTheme(hopeTheme);
+      if (fearTheme) preloadTheme(fearTheme);
+    }
+
     // Mark initialization as complete
     isInitialized = true;
     // Store initialization state in extension storage
@@ -757,12 +761,48 @@ function preloadTheme(theme: ITheme): Promise<void> {
 
   try {
     dddice.loadTheme(theme, true);
-    // Just execute loadThemeResources and return void
     dddice.loadThemeResources(theme.id, true);
     return Promise.resolve();
   } catch (e) {
     log.debug('Error preloading theme:', e);
     return Promise.reject(e);
+  }
+}
+
+async function updateParticipantName() {
+  const room = await getStorage('room');
+  if (!user) {
+    try {
+      user = (await dddice?.api?.user.get())?.data;
+    } catch (e) {
+      log.debug('Failed to get user', e);
+      return;
+    }
+  }
+
+  const { system } = detectGameSystem();
+  const config = gameConfigs[system];
+  const characterNameSelector = config.getCharacterNameSelector;
+
+  if (!characterNameSelector) return;
+
+  if (room && user) {
+    const userParticipant = room.participants.find(
+      ({ user: { uuid: participantUuid } }) => participantUuid === user.uuid,
+    );
+    const characterName = document.querySelector<HTMLElement>(characterNameSelector)?.textContent;
+
+    log.debug('Character name:', characterName);
+    log.debug('User participant:', userParticipant.username);
+
+    if (userParticipant && userParticipant.username !== characterName) {
+      userParticipant.username = characterName;
+      setStorage({ room });
+      await dddice?.api?.room.updateParticipant(room.slug, userParticipant.id, {
+        username: characterName,
+      });
+      log.debug('Updated character name in room:', characterName);
+    }
   }
 }
 
@@ -796,41 +836,9 @@ async function init() {
     }
   } else {
     log.debug('Already initialized, updating state if needed');
-    // We're already initialized, just make sure we're watching localStorage
     if (!watchingStorage) {
       log.debug('Starting localStorage watch for dice rolls');
       watchLocalStorage();
-    }
-
-    // Update character name if needed
-    const room = await getStorage('room');
-    if (!user) {
-      try {
-        user = (await dddice?.api?.user.get())?.data;
-      } catch (e) {
-        log.debug('Failed to get user', e);
-      }
-    }
-
-    const config = gameConfigs[system];
-    const characterNameSelector = config.getCharacterNameSelector;
-
-    if (characterNameSelector) {
-      const characterName = document.querySelector<HTMLElement>(characterNameSelector)?.textContent;
-
-      if (room && user && characterName) {
-        const userParticipant = room.participants.find(
-          ({ user: { uuid: participantUuid } }) => participantUuid === user.uuid,
-        );
-
-        if (userParticipant && characterName && userParticipant.username !== characterName) {
-          userParticipant.username = characterName;
-          setStorage({ room });
-          await dddice?.api?.room.updateParticipant(room.slug, userParticipant.id, {
-            username: characterName,
-          });
-        }
-      }
     }
 
     if (dddice?.canvas) dddice.resize(window.innerWidth, window.innerHeight);
@@ -846,6 +854,7 @@ chrome.runtime.onMessage.addListener(function (message) {
   switch (message.type) {
     case 'reloadDiceEngine':
       initializeSDK();
+      init();
       break;
     case 'preloadTheme':
       preloadTheme(message.theme);
