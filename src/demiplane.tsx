@@ -24,7 +24,6 @@ let watchingStorage = false; // Track if we're already watching storage
 // Game system detection and configuration
 enum GameSystem {
   DAGGERHEART = 'daggerheart',
-  PATHFINDER = 'pathfinder',
   COSMERERPG = 'cosmererpg',
   UNKNOWN = 'unknown',
 }
@@ -119,7 +118,6 @@ interface DiceRoll {
     };
   }>;
 
-  // Pathfinder specific properties
   origin?: string;
 
   // Result can have different structures
@@ -156,7 +154,6 @@ interface DiceRoll {
       conditions: Array<any>;
     };
 
-    // Pathfinder specific
     raw_dice?: {
       parts: Array<{
         type: string;
@@ -257,62 +254,6 @@ const gameConfigs: Record<GameSystem, GameConfig> = {
       return diceArray;
     },
     getCharacterNameSelector: '.character-name',
-  },
-  [GameSystem.PATHFINDER]: {
-    pathRegex: /^\/nexus\/pathfinder2e\/character-sheet\/([^/]+)/,
-    storageKeyPattern: '{uuid}-dicerolls',
-    getRollName: roll => {
-      // Use roll name and origin for a complete description
-      if (roll.origin) {
-        return `${roll.name} (${roll.origin})`;
-      }
-      return roll.name;
-    },
-    getTypeResult: roll => {
-      // Check for critical success/failure based on crit value if available
-      if (roll?.result?.crit === 1) {
-        return ' Critical Success!';
-      } else if (roll?.result?.crit === -1) {
-        return ' Critical Failure!';
-      }
-      return '';
-    },
-    processDice: roll => {
-      const diceArray = [];
-
-      // Check if we have valid roll data
-      if (!roll?.result?.raw_dice?.parts) {
-        log.debug('Invalid Pathfinder roll data structure:', roll);
-        return diceArray;
-      }
-
-      // Process each part of the roll (dice, operators, constants)
-      for (const part of roll.result.raw_dice.parts) {
-        if (part.type === 'dice') {
-          // Process all dice in this part
-          for (const die of part.dice) {
-            if (die.type === 'single_dice') {
-              diceArray.push({
-                type: die.value > 0 ? `d${die.size}` : 'mod', // d20, d4, etc.
-                value: die.value,
-                theme: undefined,
-                label: `${part.num_dice}d${die.size}`,
-              });
-            }
-          }
-        } else if (part.type === 'constant') {
-          // Add modifiers as static values
-          diceArray.push({
-            type: 'mod',
-            value: part.value,
-            theme: undefined,
-          });
-        }
-      }
-
-      return diceArray;
-    },
-    getCharacterNameSelector: '.character-name', // Update with the correct selector for Pathfinder
   },
   [GameSystem.COSMERERPG]: {
     pathRegex: /^\/nexus\/cosmererpg\/character-sheet\/([^/]+)/,
@@ -558,7 +499,6 @@ function detectGameSystem(): { system: GameSystem; uuid: string | null } {
 function processRoll(roll: DiceRoll): void {
   log.debug('Processing roll:', {
     name: roll.name,
-    // Safely handle the roll.dice property which may not exist in Pathfinder
     dice: roll.dice ? roll.dice.map(d => d.die) : 'not available',
     modifiers: roll.modifiersParsed,
     result: roll.result,
