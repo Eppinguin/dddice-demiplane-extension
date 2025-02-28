@@ -18,11 +18,11 @@ Notify.init({
 let dddice: ThreeDDice;
 let canvasElement: HTMLCanvasElement;
 let user: IUser;
-let isInitialized = false; // Track initialization state
-let watchingStorage = false; // Track if we're already watching storage
+let isInitialized = false;
+let watchingStorage = false;
 
-// Game system detection and configuration
 enum GameSystem {
+  AVATARLEGENDS = 'avatarlegends',
   DAGGERHEART = 'daggerheart',
   COSMERERPG = 'cosmererpg',
   UNKNOWN = 'unknown',
@@ -68,15 +68,12 @@ interface ModifierEntry {
 }
 
 interface DiceRoll {
-  // Common properties
   name: string;
   type?: string;
-
-  // Cosmere/Daggerheart specific properties
   dice?: Array<{
     slug: string;
     die: string;
-    type?: string; // Add this for kh/kl support
+    type?: string;
     label: string;
     image: string;
     pooledImage: string;
@@ -84,8 +81,6 @@ interface DiceRoll {
   roll?: string;
   modifiersParsed?: ModifierEntry[] | ModifierEntry[][] | ModifierEntry;
   rerolled?: boolean;
-
-  // Cosmere specific
   results?: Array<{
     dice: Array<{
       originalValue: any;
@@ -117,12 +112,8 @@ interface DiceRoll {
       conditions: Array<any>;
     };
   }>;
-
   origin?: string;
-
-  // Result can have different structures
   result: {
-    // Daggerheart/Cosmere structure
     dice?: Array<{
       id: number;
       die: string;
@@ -142,8 +133,6 @@ interface DiceRoll {
         overrideValue?: number;
       };
     }>;
-
-    // Common properties
     total: number;
     maxTotal?: number;
     crit?: number;
@@ -153,7 +142,6 @@ interface DiceRoll {
       label: string;
       conditions: Array<any>;
     };
-
     raw_dice?: {
       parts: Array<{
         type: string;
@@ -180,10 +168,84 @@ interface DiceRoll {
   };
 }
 
+const baseConfig: GameConfig = {
+  pathRegex: /^\/nexus\/([^/]+)\/character-sheet\/([^/]+)/,
+  storageKeyPattern: '{uuid}-dice-history',
+  getRollName: roll => roll.name + (roll.origin ? ` (${roll.origin})` : ''),
+  getTypeResult: () => '',
+  processDice: roll => {
+    const diceArray = [];
+
+    if (roll?.result?.raw_dice?.parts) {
+      let lastOperator = '+';
+
+      for (const part of roll.result.raw_dice.parts) {
+        if (part.type === 'dice') {
+          for (const die of part.dice) {
+            if (die.type === 'single_dice') {
+              diceArray.push({
+                type: `d${die.size}`,
+                value: die.value,
+                theme: undefined,
+                label: `${part.num_dice}d${die.size}`,
+              });
+            }
+          }
+        } else if (part.type === 'operator' && typeof part.value === 'string' && part.value) {
+          lastOperator = part.value;
+        } else if (part.type === 'constant') {
+          diceArray.push({
+            type: 'mod',
+            value: lastOperator === '-' ? -part.value : part.value,
+            theme: undefined,
+          });
+        }
+      }
+    } else if (roll?.result?.dice) {
+      roll.result.dice.forEach(die => {
+        log.debug('Processing die:', die);
+        diceArray.push({
+          type: die.value > 0 ? die.die : 'mod',
+          value: die.value,
+          theme: undefined,
+        });
+      });
+
+      if (roll.modifiersParsed && Array.isArray(roll.modifiersParsed)) {
+        const modifiers = roll.modifiersParsed as ModifierEntry[];
+        const addModifier = modifiers.find(m => m.purpose === 'add');
+        if (addModifier && typeof addModifier.value === 'number' && addModifier.value !== 0) {
+          diceArray.push({
+            type: 'mod',
+            value: addModifier.value,
+            theme: undefined,
+          });
+        }
+      }
+    }
+
+    return diceArray;
+  },
+};
+
 const gameConfigs: Record<GameSystem, GameConfig> = {
+  [GameSystem.AVATARLEGENDS]: {
+    ...baseConfig,
+    pathRegex: /^\/nexus\/avatarlegends\/character-sheet\/([^/]+)/,
+    storageKeyPattern: '{uuid}-dicerolls',
+    getTypeResult: roll => {
+      if (roll.result.total > 10) {
+        return ' (strong hit)';
+      }
+      if (roll.result.total > 7) {
+        return ' (weak hit)';
+      }
+      return ' (miss)';
+    },
+  },
   [GameSystem.DAGGERHEART]: {
+    ...baseConfig,
     pathRegex: /^\/nexus\/daggerheart\/character-sheet\/([^/]+)/,
-    storageKeyPattern: '{uuid}-dice-history',
     getRollName: roll => {
       if (!Array.isArray(roll.modifiersParsed)) {
         const mod = roll.modifiersParsed as ModifierEntry | undefined;
@@ -212,19 +274,17 @@ const gameConfigs: Record<GameSystem, GameConfig> = {
       const diceArray = [];
 
       roll.result.dice.forEach(die => {
-        // const value = die.config.isNegative ? -die.value : die.value;
         const label = die.config.name;
         log.debug('Processing die:', die);
 
         diceArray.push({
           type: die.value > 0 ? die.die : 'mod',
           value: die.value,
-          theme: undefined, // Will be set in sendRollRequest based on die type
+          theme: undefined,
           label,
         });
       });
 
-      // Add static modifier if present
       if (roll.modifiersParsed) {
         if (Array.isArray(roll.modifiersParsed)) {
           const modifiers = roll.modifiersParsed as ModifierEntry[];
@@ -256,8 +316,8 @@ const gameConfigs: Record<GameSystem, GameConfig> = {
     getCharacterNameSelector: '.character-name',
   },
   [GameSystem.COSMERERPG]: {
+    ...baseConfig,
     pathRegex: /^\/nexus\/cosmererpg\/character-sheet\/([^/]+)/,
-    storageKeyPattern: '{uuid}-dice-history',
     getRollName: roll => {
       if (Array.isArray(roll.modifiersParsed)) {
         const firstGroup = roll.modifiersParsed[0];
@@ -276,19 +336,14 @@ const gameConfigs: Record<GameSystem, GameConfig> = {
       return roll.name;
     },
     getTypeResult: roll => {
-      // First check for plot die in the dice array
       const plotDie = roll.dice?.find(d => d.slug === 'plot');
-
-      // Look for plot die value in different possible locations
       let plotDieValue;
 
-      // Check in roll.results first
       if (roll.results && roll.results.length > 0) {
         const plotDieResult = roll.results[0]?.dice.find(d => d.slug === 'plot');
         plotDieValue = plotDieResult?.originalValue || plotDieResult?.value;
       }
 
-      // If not found, check in roll.result.dice
       if (!plotDieValue && roll.result.dice) {
         const plotDieResult = roll.result.dice.find(d => d.slug === 'plot');
         plotDieValue = plotDieResult?.originalValue || plotDieResult?.value;
@@ -302,7 +357,6 @@ const gameConfigs: Record<GameSystem, GameConfig> = {
         }
       }
 
-      // Check status field as backup
       if (roll?.result?.status?.slug === 'opportunity') {
         return ' Opportunity!';
       } else if (roll?.result?.status?.slug === 'complication') {
@@ -316,7 +370,6 @@ const gameConfigs: Record<GameSystem, GameConfig> = {
       let operator = {};
       let plotDice = null;
 
-      // Check if any dice in the roll need kh/kl operators
       if (roll.dice && roll.dice.length > 0) {
         const hasKeepHighest = roll.dice.some(d => d.type === 'kh');
         const hasKeepLowest = roll.dice.some(d => d.type === 'kl');
@@ -327,7 +380,6 @@ const gameConfigs: Record<GameSystem, GameConfig> = {
         }
       }
 
-      // Handle main dice
       if (roll.results) {
         roll.results.forEach((result, index) => {
           result.dice.forEach(die => {
@@ -335,9 +387,7 @@ const gameConfigs: Record<GameSystem, GameConfig> = {
             const isPlotDie = die.slug === 'plot';
             const groupSlug = die.groupSlug || (index === 0 ? 'main-d20-group' : 'damage-group');
 
-            // Handle plot die separately
             if (isPlotDie) {
-              // Store plot die for separate roll
               plotDice = {
                 type: 'd6',
                 value: die.originalValue || die.value,
@@ -356,7 +406,6 @@ const gameConfigs: Record<GameSystem, GameConfig> = {
             }
           });
 
-          // Add modifiers for this result group
           if (roll.modifiersParsed && Array.isArray(roll.modifiersParsed)) {
             const modGroups = roll.modifiersParsed as ModifierEntry[][];
             const modGroup = modGroups[index];
@@ -380,7 +429,6 @@ const gameConfigs: Record<GameSystem, GameConfig> = {
           const isPlotDie = die.slug === 'plot';
 
           if (isPlotDie) {
-            // Store plot die for separate roll
             plotDice = {
               type: 'd6',
               value: die.originalValue || value,
@@ -408,71 +456,7 @@ const gameConfigs: Record<GameSystem, GameConfig> = {
     getCharacterNameSelector: '.character-name',
   },
   [GameSystem.UNKNOWN]: {
-    pathRegex: /^\/nexus\/([^/]+)\/character-sheet\/([^/]+)/,
-    storageKeyPattern: '{uuid}-dice-history',
-    getRollName: roll => roll.name + (roll.origin ? ` (${roll.origin})` : ''),
-    getTypeResult: () => '',
-    processDice: roll => {
-      const diceArray = [];
-
-      // Handle the new structure with raw_dice
-      if (roll?.result?.raw_dice?.parts) {
-        let lastOperator = '+'; // Default operator is addition
-
-        // Process each part of the roll (dice, operators, constants)
-        for (const part of roll.result.raw_dice.parts) {
-          if (part.type === 'dice') {
-            // Process all dice in this part
-            for (const die of part.dice) {
-              if (die.type === 'single_dice') {
-                diceArray.push({
-                  type: `d${die.size}`, // d6, d20, etc.
-                  value: die.value,
-                  theme: undefined,
-                  label: `${part.num_dice}d${die.size}`,
-                });
-              }
-            }
-          } else if (part.type === 'operator' && typeof part.value === 'string' && part.value) {
-            // Store the last non-empty string operator
-            lastOperator = part.value;
-          } else if (part.type === 'constant') {
-            // Add modifiers as static values, applying the last operator
-            diceArray.push({
-              type: 'mod',
-              value: lastOperator === '-' ? -part.value : part.value,
-              theme: undefined,
-            });
-          }
-        }
-      }
-      // Handle the original structure
-      else if (roll?.result?.dice) {
-        roll.result.dice.forEach(die => {
-          log.debug('Processing die:', die);
-          diceArray.push({
-            type: die.value > 0 ? die.die : 'mod',
-            value: die.value,
-            theme: undefined,
-          });
-        });
-
-        // Add static modifier if present
-        if (roll.modifiersParsed && Array.isArray(roll.modifiersParsed)) {
-          const modifiers = roll.modifiersParsed as ModifierEntry[];
-          const addModifier = modifiers.find(m => m.purpose === 'add');
-          if (addModifier && typeof addModifier.value === 'number' && addModifier.value !== 0) {
-            diceArray.push({
-              type: 'mod',
-              value: addModifier.value,
-              theme: undefined,
-            });
-          }
-        }
-      }
-
-      return diceArray;
-    },
+    ...baseConfig,
   },
 };
 
@@ -482,7 +466,6 @@ function detectGameSystem(): { system: GameSystem; uuid: string | null } {
   for (const [system, config] of Object.entries(gameConfigs)) {
     const match = window.location.pathname.match(config.pathRegex);
     if (match) {
-      // Store the detected game system in extension storage
       setStorage({ gameSystem: system });
       return {
         system: system as GameSystem,
@@ -491,7 +474,6 @@ function detectGameSystem(): { system: GameSystem; uuid: string | null } {
     }
   }
 
-  // If no specific system is detected, store the UNKNOWN type
   setStorage({ gameSystem: GameSystem.UNKNOWN });
   return { system: GameSystem.UNKNOWN, uuid: null };
 }
@@ -528,13 +510,11 @@ async function watchLocalStorage(): Promise<void> {
     return;
   }
 
-  // If we're already watching storage for this session, don't set up another watcher
   if (watchingStorage) {
     log.debug('Already watching localStorage');
     return;
   }
 
-  // For Unknown system, try both storage key patterns
   const storageKeys =
     system === GameSystem.UNKNOWN
       ? [
@@ -545,10 +525,8 @@ async function watchLocalStorage(): Promise<void> {
 
   log.debug(`Watching localStorage keys: ${storageKeys.join(', ')} for game system: ${system}`);
 
-  // Initialize lastRolls with current state to prevent rolling on page load
   let lastRolls: DiceRoll[] | null = null;
 
-  // Check each storage key for initial data
   for (const key of storageKeys) {
     const historyString = localStorage.getItem(key);
     if (historyString) {
@@ -561,13 +539,12 @@ async function watchLocalStorage(): Promise<void> {
   const checkForNewRolls = async () => {
     let currentRolls: DiceRoll[] | null = null;
 
-    // Check each storage key for new rolls
     for (const key of storageKeys) {
       const historyString = localStorage.getItem(key);
       if (historyString) {
         try {
           currentRolls = JSON.parse(historyString);
-          break; // Use the first valid data found
+          break;
         } catch (e) {
           log.debug(`Error parsing dice history from ${key}:`, e);
         }
@@ -584,7 +561,6 @@ async function watchLocalStorage(): Promise<void> {
         !lastRolls ||
         (currentRolls[0] && JSON.stringify(currentRolls[0]) !== JSON.stringify(lastRolls[0]))
       ) {
-        // Process only the newest roll
         const newestRoll = currentRolls[0];
         if (newestRoll) {
           log.debug(
@@ -604,12 +580,10 @@ async function watchLocalStorage(): Promise<void> {
   };
 
   log.debug('Setting up interval for checking new rolls');
-  // Set up the interval to watch for future changes
   setInterval(checkForNewRolls, 1000);
-  watchingStorage = true; // Mark that we're watching storage
+  watchingStorage = true;
   log.debug('watchingStorage flag set to true');
 
-  // Run an immediate check for dice history
   checkForNewRolls();
 }
 
@@ -645,13 +619,12 @@ async function sendRollRequest(
     return;
   }
 
-  // Wait for initialization using public methods
   if (dddice) {
     log.debug('Waiting for 3D engine to initialize...');
     try {
       await new Promise<void>((resolve, reject) => {
         let attempts = 0;
-        const maxAttempts = 50; // 5 seconds total
+        const maxAttempts = 50;
         const checkReady = () => {
           try {
             dddice.clear();
@@ -676,7 +649,6 @@ async function sendRollRequest(
 
   try {
     log.debug('Sending roll:', roll);
-    // Assign themes based on game system and die type
     roll.forEach(die => {
       if (currentGameSystem === GameSystem.DAGGERHEART) {
         if (die.label === 'Hope') {
@@ -698,25 +670,19 @@ async function sendRollRequest(
     const { system } = detectGameSystem();
     const config = gameConfigs[system];
 
-    // Special handling for CosmereRPG
     if (system === GameSystem.COSMERERPG) {
       const result = config.processDice(originalRoll);
       const baseLabel = config.getRollName(originalRoll);
 
-      // Check if we have multiple results or a plot die
       let plotDie = null;
       if (!Array.isArray(result) && result.plotDice) {
         plotDie = result.plotDice;
-        // Apply theme to plot die
         plotDie.theme = defaultTheme?.id;
       }
 
-      // Check if this roll should split attack and damage
       const shouldSplitRoll = originalRoll.results && originalRoll.results.length > 1;
 
-      // Always check for attack and damage dice for CosmereRPG
       if (shouldSplitRoll) {
-        // Create attack roll
         const attackDice = roll.filter(
           die =>
             die.groupSlug === 'main-d20-group' ||
@@ -726,23 +692,19 @@ async function sendRollRequest(
           await dddice.api.roll.create(attackDice, { label: `${baseLabel} (Attack)`, operator });
         }
 
-        // Create damage roll - include operator here since that's where kh/kl is used
         const damageDice = roll.filter(die => die.groupSlug === 'damage-group');
         if (damageDice.length > 0) {
           await dddice.api.roll.create(damageDice, { label: `${baseLabel} (Damage)`, operator });
         }
 
-        // Send plot die separately if it exists
         if (plotDie) {
           await dddice.api.roll.create([plotDie], {
             label: `${baseLabel}${config.getTypeResult(originalRoll)}`,
           });
         }
       } else {
-        // For single result rolls, handle plot die separately if it exists
         if (plotDie) {
           log.debug('Sending plot die:', plotDie);
-          // Send main dice
           const mainDice = roll.filter(die => die.groupSlug !== 'plot-die');
           if (mainDice.length > 0) {
             log.debug('Sending main dice:', mainDice);
@@ -751,23 +713,20 @@ async function sendRollRequest(
               operator,
             });
           }
-          // Send plot die separately
           log.debug('originalRoll:', originalRoll);
           await dddice.api.roll.create([plotDie], {
             label: `${baseLabel}${config.getTypeResult(originalRoll)}`,
           });
         } else {
-          // No plot die, send as a single roll
           await dddice.api.roll.create(roll, {
             label: `${baseLabel}${config.getTypeResult(originalRoll)}`,
             operator,
           });
         }
       }
-      return; // Return early since we've handled this roll
+      return;
     }
 
-    // For all other systems, proceed as normal
     const label = config.getRollName(originalRoll) + config.getTypeResult(originalRoll);
     await dddice.api.roll.create(roll, { label: label, operator });
   } catch (e: any) {
@@ -826,18 +785,14 @@ async function initializeSDK(): Promise<void> {
     }
     if (theme) preloadTheme(theme);
 
-    // Preload additional themes for Daggerheart if we're on a Daggerheart page
     if (currentGameSystem === GameSystem.DAGGERHEART) {
       if (hopeTheme) preloadTheme(hopeTheme);
       if (fearTheme) preloadTheme(fearTheme);
     }
 
-    // Mark initialization as complete
     isInitialized = true;
-    // Store initialization state in extension storage
     setStorage({ demiplane_initialized: true });
 
-    // Start watching for dice rolls
     log.debug('Starting localStorage watch from initializeSDK');
     watchLocalStorage();
   } catch (e: any) {
@@ -933,16 +888,13 @@ async function init() {
 
   log.debug(`init: on ${system} character sheet page`);
 
-  // Check if we're already initialized with the API ready
   if (!isInitialized && !dddice?.api) {
-    // Check if previously initialized in storage
     const initialized = await getStorage('demiplane_initialized');
     const apiKey = await getStorage('apiKey');
 
     log.debug('Checking initialization state:', { initialized, apiKeyExists: !!apiKey });
 
     if (apiKey) {
-      // If API key exists, initialize the SDK
       await initializeSDK();
     }
   } else {
@@ -960,7 +912,6 @@ document.addEventListener('click', () => {
   if (dddice && !dddice?.isDiceThrowing) dddice.clear();
 });
 
-// @ts-ignore
 chrome.runtime.onMessage.addListener(function (message) {
   switch (message.type) {
     case 'reloadDiceEngine':
@@ -973,14 +924,11 @@ chrome.runtime.onMessage.addListener(function (message) {
   }
 });
 
-// Initialize on page load and resize
 window.addEventListener('load', () => init());
 window.addEventListener('resize', () => init());
 
-// Also initialize when the script first runs
 init();
 
-// Add listener for URL changes (for single-page app navigation)
 let lastUrl = window.location.href;
 new MutationObserver(() => {
   const currentUrl = window.location.href;
