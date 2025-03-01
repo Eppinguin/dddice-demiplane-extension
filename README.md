@@ -2,9 +2,9 @@
 
 # dddice Browser Extension - Demiplane Integration Fork
 
-This is a custom fork that enables dddice integration on Demiplane. With this fork, you can roll 3D dice directly in the Charactersheet for multiple game systems.
+This is a custom fork that enables [dddice](https://dddice.com) integration on Demiplane. With this fork, you can roll 3D dice directly in the Charactersheet for multiple game systems including Daggerheart, CosmereRPG, Avatar Legends, and other systems.
 
-## Supported Systems
+## Supported Systems on Demiplane
 
 -   Daggerheart (with full special dice support)
 -   CosmereRPG (with Plot Die Support)
