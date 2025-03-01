@@ -11,7 +11,7 @@ import ThemeCard from './ThemeCard';
 interface IThemeProps {
   theme: ITheme;
   onSwitchTheme();
-  label?: string; // Add label property to the interface
+  label?: string;
 }
 
 const Theme = (props: IThemeProps) => {

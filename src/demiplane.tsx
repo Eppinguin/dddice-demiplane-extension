@@ -389,7 +389,7 @@ const gameConfigs: Record<GameSystem, GameConfig> = {
 
             if (isPlotDie) {
               plotDice = {
-                type: 'd6',
+                type: 'setback', // This will be checked against theme later in sendRollRequest
                 value: die.originalValue || die.value,
                 theme: undefined,
                 label: 'Plot Die',
@@ -430,7 +430,7 @@ const gameConfigs: Record<GameSystem, GameConfig> = {
 
           if (isPlotDie) {
             plotDice = {
-              type: 'd6',
+              type: 'setback', // This will be checked against theme later in sendRollRequest
               value: die.originalValue || value,
               theme: undefined,
               label: 'Plot Die',
@@ -598,11 +598,12 @@ async function sendRollRequest(
   originalRoll: DiceRoll,
   operator = {},
 ): Promise<void> {
-  const [room, defaultTheme, hopeTheme, fearTheme] = await Promise.all([
+  const [room, defaultTheme, hopeTheme, fearTheme, plotDieTheme] = await Promise.all([
     getStorage('room'),
     getStorage('theme'),
     getStorage('hopeTheme'),
     getStorage('fearTheme'),
+    getStorage('plotDieTheme'),
   ]);
 
   if (!dddice?.api) {
@@ -677,7 +678,23 @@ async function sendRollRequest(
       let plotDie = null;
       if (!Array.isArray(result) && result.plotDice) {
         plotDie = result.plotDice;
-        plotDie.theme = defaultTheme?.id;
+        // Apply plot die theme if available
+        plotDie.theme = plotDieTheme?.id || defaultTheme?.id;
+
+        // Check if the selected theme supports 'setback' die type by looking at available_dice array
+        const themeToCheck = plotDieTheme || defaultTheme;
+        if (themeToCheck) {
+          // Default to d6 unless we find "setback" in available dice
+          plotDie.type = 'd6';
+
+          // Check if theme has the setback die type
+          if (themeToCheck.available_dice && Array.isArray(themeToCheck.available_dice)) {
+            const hasSetback = themeToCheck.available_dice.some(die => die.id === 'setback');
+            if (hasSetback) {
+              plotDie.type = 'setback';
+            }
+          }
+        }
       }
 
       const shouldSplitRoll = originalRoll.results && originalRoll.results.length > 1;
@@ -718,6 +735,7 @@ async function sendRollRequest(
       } else {
         if (plotDie) {
           log.debug('Sending plot die:', plotDie);
+          log.debug('Plot die theme:', plotDie.theme);
           const mainDice = roll.filter(die => die.groupSlug !== 'plot-die');
           if (mainDice.length > 0) {
             log.debug('Sending main dice:', mainDice);
@@ -751,12 +769,13 @@ async function sendRollRequest(
 }
 
 async function initializeSDK(): Promise<void> {
-  const [apiKey, room, theme, hopeTheme, fearTheme, renderMode] = await Promise.all([
+  const [apiKey, room, theme, hopeTheme, fearTheme, plotDieTheme, renderMode] = await Promise.all([
     getStorage('apiKey'),
     getStorage('room'),
     getStorage('theme'),
     getStorage('hopeTheme'),
     getStorage('fearTheme'),
+    getStorage('plotDieTheme'),
     getStorage('render mode'),
   ]);
 
@@ -798,6 +817,10 @@ async function initializeSDK(): Promise<void> {
     }
     if (theme) preloadTheme(theme);
 
+    if (currentGameSystem === GameSystem.COSMERERPG) {
+      if (plotDieTheme) preloadTheme(plotDieTheme);
+    }
+
     if (currentGameSystem === GameSystem.DAGGERHEART) {
       if (hopeTheme) preloadTheme(hopeTheme);
       if (fearTheme) preloadTheme(fearTheme);
@@ -832,13 +855,14 @@ function generateNotificationMessage(roll: IRoll) {
   }`;
 }
 
-function preloadTheme(theme: ITheme): Promise<void> {
+async function preloadTheme(theme: ITheme): Promise<void> {
   if (!theme || !dddice) {
     log.debug('Cannot preload theme: missing theme or dddice instance');
     return Promise.resolve();
   }
 
   try {
+    log.debug('Preloading theme:', theme);
     dddice.loadTheme(theme, true);
     dddice.loadThemeResources(theme.id, true);
     return Promise.resolve();

@@ -17,10 +17,11 @@ interface IThemes {
   onSelectTheme(room: ITheme): void;
   onConnectAccount(): void;
   onRefreshThemes(): void;
+  label?: string;
 }
 
 const ThemeSelection = (props: IThemes) => {
-  const { themes, onSelectTheme, onConnectAccount, onRefreshThemes } = props;
+  const { themes, onSelectTheme, onConnectAccount, onRefreshThemes, label } = props;
 
   /**
    * Render
@@ -29,7 +30,7 @@ const ThemeSelection = (props: IThemes) => {
     <div className="text-white flex flex-col">
       <div className="mt-3 flex">
         <div className="flex mr-auto">{''}</div>
-        <div className="flex flex-row text-xl my-auto justify-center">Select a Theme</div>
+        <div className="flex flex-row text-xl my-auto justify-center">Select a {label} Theme</div>
         <span onClick={onRefreshThemes} className="ml-auto">
           <Refresh data-tip="refresh dice box" className="flex h-4 w-4" />
         </span>

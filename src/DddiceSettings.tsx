@@ -26,6 +26,9 @@ import CodeActivationScreen from './ts/Partials/CodeActivationScreen';
 // Game system enum that matches the one in demiplane.tsx
 enum GameSystem {
   DAGGERHEART = 'daggerheart',
+  COSMERERPG = 'cosmererpg',
+  AVATARLEGENDS = 'avatarlegends',
+  UNKNOWN = 'unknown',
 }
 
 export interface IStorage {
@@ -37,6 +40,7 @@ export interface IStorage {
   renderMode: boolean;
   hopeTheme?: ITheme; // Daggerheart specific
   fearTheme?: ITheme; // Daggerheart specific
+  plotDieTheme?: ITheme; // Cosmere RPG specific
   gameSystem?: GameSystem; // Track current game system
   loaded: boolean;
 }
@@ -50,6 +54,7 @@ export const DefaultStorage: IStorage = {
   renderMode: true,
   hopeTheme: undefined,
   fearTheme: undefined,
+  plotDieTheme: undefined,
   gameSystem: undefined,
   loaded: false,
 };
@@ -137,18 +142,29 @@ const DddiceSettings = (props: DddiceSettingsProps) => {
 
   useEffect(() => {
     async function initStorage() {
-      const [apiKey, room, theme, rooms, themes, renderMode, hopeTheme, fearTheme, gameSystem] =
-        await Promise.all([
-          storageProvider.getStorage('apiKey'),
-          storageProvider.getStorage('room'),
-          storageProvider.getStorage('theme'),
-          storageProvider.getStorage('rooms'),
-          storageProvider.getStorage('themes'),
-          storageProvider.getStorage('render mode'),
-          storageProvider.getStorage('hopeTheme'),
-          storageProvider.getStorage('fearTheme'),
-          storageProvider.getStorage('gameSystem'),
-        ]);
+      const [
+        apiKey,
+        room,
+        theme,
+        rooms,
+        themes,
+        renderMode,
+        hopeTheme,
+        fearTheme,
+        plotDieTheme,
+        gameSystem,
+      ] = await Promise.all([
+        storageProvider.getStorage('apiKey'),
+        storageProvider.getStorage('room'),
+        storageProvider.getStorage('theme'),
+        storageProvider.getStorage('rooms'),
+        storageProvider.getStorage('themes'),
+        storageProvider.getStorage('render mode'),
+        storageProvider.getStorage('hopeTheme'),
+        storageProvider.getStorage('fearTheme'),
+        storageProvider.getStorage('plotDieTheme'),
+        storageProvider.getStorage('gameSystem'),
+      ]);
 
       setState((storage: IStorage) => ({
         ...storage,
@@ -160,6 +176,7 @@ const DddiceSettings = (props: DddiceSettingsProps) => {
         renderMode: renderMode === undefined ? true : renderMode,
         hopeTheme, // Set Hope theme
         fearTheme, // Set Fear theme
+        plotDieTheme, // Set Plot die theme
         gameSystem,
         loaded: true,
       }));
@@ -208,6 +225,22 @@ const DddiceSettings = (props: DddiceSettingsProps) => {
     if (theme) {
       storageProvider.setStorage({ fearTheme: theme });
       preloadTheme(theme);
+    }
+
+    ReactTooltip.hide();
+  }, []);
+
+  const onChangePlotDieTheme = useCallback((theme: ITheme) => {
+    setState((storage: IStorage) => ({
+      ...storage,
+      plotDieTheme: theme,
+    }));
+
+    if (theme) {
+      storageProvider.setStorage({ plotDieTheme: theme });
+      preloadTheme(theme);
+    } else {
+      storageProvider.removeStorage('plotDieTheme');
     }
 
     ReactTooltip.hide();
@@ -462,45 +495,60 @@ const DddiceSettings = (props: DddiceSettingsProps) => {
           <>
             <div className="text-white text-lg font-bold mt-4 mb-2">Daggerheart Special Dice</div>
             {/* Hope Theme */}
-            <div className="py-1">
-              <div className="text-gray-400 text-sm mb-1">
-                Hope Die Theme (6-sided die with vine symbol)
-              </div>
-              {!state.hopeTheme ? (
-                <ThemeSelection
-                  themes={state.themes}
-                  onSelectTheme={onChangeHopeTheme}
-                  onConnectAccount={() => setIsEnterApiKey(true)}
-                  onRefreshThemes={refreshThemes}
-                />
-              ) : (
-                <Theme
-                  theme={state.hopeTheme}
-                  onSwitchTheme={() => onChangeHopeTheme(undefined)}
-                  label="Hope Die"
-                />
-              )}
-            </div>
+            {!state.hopeTheme ? (
+              <ThemeSelection
+                themes={state.themes}
+                onSelectTheme={onChangeHopeTheme}
+                onConnectAccount={() => setIsEnterApiKey(true)}
+                onRefreshThemes={refreshThemes}
+                label="Hope Die"
+              />
+            ) : (
+              <Theme
+                theme={state.hopeTheme}
+                onSwitchTheme={() => onChangeHopeTheme(undefined)}
+                label="Hope Die"
+              />
+            )}
             {/* Fear Theme */}
-            <div className="py-1">
-              <div className="text-gray-400 text-sm mb-1">
-                Fear Die Theme (6-sided die with skull symbol)
-              </div>
-              {!state.fearTheme ? (
-                <ThemeSelection
-                  themes={state.themes}
-                  onSelectTheme={onChangeFearTheme}
-                  onConnectAccount={() => setIsEnterApiKey(true)}
-                  onRefreshThemes={refreshThemes}
-                />
-              ) : (
-                <Theme
-                  theme={state.fearTheme}
-                  onSwitchTheme={() => onChangeFearTheme(undefined)}
-                  label="Fear Die"
-                />
-              )}
-            </div>
+            {!state.fearTheme ? (
+              <ThemeSelection
+                themes={state.themes}
+                onSelectTheme={onChangeFearTheme}
+                onConnectAccount={() => setIsEnterApiKey(true)}
+                onRefreshThemes={refreshThemes}
+                label="Fear Die"
+              />
+            ) : (
+              <Theme
+                theme={state.fearTheme}
+                onSwitchTheme={() => onChangeFearTheme(undefined)}
+                label="Fear Die"
+              />
+            )}
+          </>
+        );
+
+      case GameSystem.COSMERERPG:
+        return (
+          <>
+            <div className="text-white text-lg font-bold mt-4 mb-2">Cosmere RPG Special Dice</div>
+            {/* Plot Die Theme */}
+            {!state.plotDieTheme ? (
+              <ThemeSelection
+                themes={state.themes}
+                onSelectTheme={onChangePlotDieTheme}
+                onConnectAccount={() => setIsEnterApiKey(true)}
+                onRefreshThemes={refreshThemes}
+                label="Plot Die"
+              />
+            ) : (
+              <Theme
+                theme={state.plotDieTheme}
+                onSwitchTheme={() => onChangePlotDieTheme(undefined)}
+                label="Plot Die"
+              />
+            )}
           </>
         );
 
@@ -586,7 +634,9 @@ const DddiceSettings = (props: DddiceSettingsProps) => {
                   />
                 ) : !state.theme ? (
                   <>
-                    <div className="text-white text-lg font-bold mt-4 mb-2">Select Default Dice Theme</div>
+                    <div className="text-white text-lg font-bold mt-4 mb-2">
+                      Select Default Dice Theme
+                    </div>
                     <ThemeSelection
                       themes={state.themes}
                       onSelectTheme={onChangeTheme}
