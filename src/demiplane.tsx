@@ -688,18 +688,31 @@ async function sendRollRequest(
             die.groupSlug === 'main-d20-group' ||
             (!die.groupSlug && die.groupSlug !== 'damage-group'),
         );
+
+        // Get the original roll name without "Attack Roll: " prefix if present
+        let baseLabelText = baseLabel;
+        if (baseLabelText.startsWith('Attack Roll:')) {
+          baseLabelText = baseLabelText.substring('Attack Roll:'.length).trim();
+        }
+
         if (attackDice.length > 0) {
-          await dddice.api.roll.create(attackDice, { label: `${baseLabel} (Attack)`, operator });
+          await dddice.api.roll.create(attackDice, {
+            label: `Attack Roll: ${baseLabelText}`,
+            operator,
+          });
         }
 
         const damageDice = roll.filter(die => die.groupSlug === 'damage-group');
         if (damageDice.length > 0) {
-          await dddice.api.roll.create(damageDice, { label: `${baseLabel} (Damage)`, operator });
+          await dddice.api.roll.create(damageDice, {
+            label: `Damage Roll: ${baseLabelText}`,
+            operator,
+          });
         }
 
         if (plotDie) {
           await dddice.api.roll.create([plotDie], {
-            label: `${baseLabel}${config.getTypeResult(originalRoll)}`,
+            label: `Plot Die: ${baseLabelText}${config.getTypeResult(originalRoll)}`,
           });
         }
       } else {
