@@ -99,7 +99,6 @@
   ],
   "web_accessible_resources": [
     "../dndbeyond.css",
-    "../demiplane.css",
     "../assets/dddice-32x32.png",
     "../roll20.css",
     "../assets/dddice-48x48.png",
