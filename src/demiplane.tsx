@@ -247,13 +247,15 @@ const gameConfigs: Record<GameSystem, GameConfig> = {
     ...baseConfig,
     pathRegex: /^\/nexus\/daggerheart\/character-sheet\/([^/]+)/,
     getRollName: roll => {
-      if (!Array.isArray(roll.modifiersParsed)) {
-        const mod = roll.modifiersParsed as ModifierEntry | undefined;
-        if (mod?.purpose === 'misc') {
-          const nameModifier = roll.modifiersParsed;
-          if (nameModifier && typeof nameModifier === 'object' && 'value' in nameModifier) {
-            return `${nameModifier.value}`;
-          }
+      log.debug('Roll:', roll);
+      if (Array.isArray(roll.modifiersParsed)) {
+        const modifiers = roll.modifiersParsed as ModifierEntry[];
+        const miscValues = modifiers
+          .filter(m => m.purpose === 'misc' && m.value !== 'damage' && typeof m.value === 'string')
+          .map(m => m.value);
+
+        if (miscValues.length > 0) {
+          return miscValues.join(': ');
         }
       }
       return roll.name;
