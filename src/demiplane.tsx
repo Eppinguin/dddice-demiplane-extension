@@ -15,11 +15,15 @@ Notify.init({
   clickToClose: true,
 });
 
+// Global state variables
 let dddice: ThreeDDice;
 let canvasElement: HTMLCanvasElement;
 let user: IUser;
 let isInitialized = false;
 let watchingStorage = false;
+let initializationAttempts = 0;
+const MAX_INITIALIZATION_ATTEMPTS = 3;
+let reconnectionTimer: ReturnType<typeof setTimeout> | null = null;
 
 enum GameSystem {
   AVATARLEGENDS = 'avatarlegends',
@@ -205,7 +209,6 @@ const baseConfig: GameConfig = {
         const dieIndex = diceArray.length;
 
         if (die.value < 0 && die.die !== 'mod') {
-          // Handle negative dice using operator instead of converting to mod
           diceArray.push({
             type: die.die,
             value: Math.abs(die.value),
@@ -293,7 +296,6 @@ const gameConfigs: Record<GameSystem, GameConfig> = {
         const dieIndex = diceArray.length;
 
         if (die.value < 0 && die.die !== 'mod') {
-          // Handle negative dice using operator instead of converting to mod
           diceArray.push({
             type: die.die,
             value: Math.abs(die.value),
@@ -417,7 +419,7 @@ const gameConfigs: Record<GameSystem, GameConfig> = {
 
             if (isPlotDie) {
               plotDice = {
-                type: 'setback', // This will be checked against theme later in sendRollRequest
+                type: 'setback',
                 value: die.originalValue || die.value,
                 theme: undefined,
                 label: 'Plot Die',
@@ -427,7 +429,6 @@ const gameConfigs: Record<GameSystem, GameConfig> = {
               const dieIndex = diceArray.length;
 
               if (die.value < 0 && die.die !== 'mod') {
-                // Handle negative dice using operator instead of converting to mod
                 diceArray.push({
                   type: die.die,
                   value: Math.abs(die.value),
@@ -472,7 +473,7 @@ const gameConfigs: Record<GameSystem, GameConfig> = {
 
           if (isPlotDie) {
             plotDice = {
-              type: 'setback', // This will be checked against theme later in sendRollRequest
+              type: 'setback',
               value: die.originalValue || value,
               theme: undefined,
               label: 'Plot Die',
@@ -482,7 +483,6 @@ const gameConfigs: Record<GameSystem, GameConfig> = {
             const dieIndex = diceArray.length;
 
             if (value < 0 && die.die !== 'mod') {
-              // Handle negative dice using operator instead of converting to mod
               diceArray.push({
                 type: die.die,
                 value: Math.abs(value),
@@ -502,7 +502,6 @@ const gameConfigs: Record<GameSystem, GameConfig> = {
         });
       }
 
-      // Merge negative indices operator with existing operator (like keep highest/lowest)
       if (negativeIndices.length > 0) {
         operator = { ...operator, '*': { '-1': negativeIndices } };
       }
@@ -558,95 +557,144 @@ function processRoll(roll: DiceRoll): void {
   sendRollRequest(diceArray, roll, operator);
 }
 
+/**
+ * Watch localStorage for dice roll changes
+ */
 async function watchLocalStorage(): Promise<void> {
-  const { system, uuid } = detectGameSystem();
-  currentGameSystem = system;
-  log.debug('Detected game system:', system);
-  log.debug('Detected character UUID:', uuid);
-  log.debug('Current watchingStorage state:', watchingStorage);
+  try {
+    // Detect game system and character UUID
+    const { system, uuid } = detectGameSystem();
+    currentGameSystem = system;
+    log.debug('Detected game system:', system);
+    log.debug('Detected character UUID:', uuid);
+    log.debug('Current watchingStorage state:', watchingStorage);
 
-  if (!uuid) {
-    log.debug('No character UUID found in URL');
-    return;
-  }
-
-  if (watchingStorage) {
-    log.debug('Already watching localStorage');
-    return;
-  }
-
-  const storageKeys =
-    system === GameSystem.UNKNOWN
-      ? [
-          gameConfigs[system].storageKeyPattern.replace('{uuid}', uuid),
-          '{uuid}-dicerolls'.replace('{uuid}', uuid),
-        ]
-      : [gameConfigs[system].storageKeyPattern.replace('{uuid}', uuid)];
-
-  log.debug(`Watching localStorage keys: ${storageKeys.join(', ')} for game system: ${system}`);
-
-  let lastRolls: DiceRoll[] | null = null;
-
-  for (const key of storageKeys) {
-    const historyString = localStorage.getItem(key);
-    if (historyString) {
-      lastRolls = JSON.parse(historyString);
-      log.debug(`Found initial data in ${key}`);
-      break;
+    // Early return if no UUID found
+    if (!uuid) {
+      log.debug('No character UUID found in URL');
+      return;
     }
-  }
 
-  const checkForNewRolls = async () => {
-    let currentRolls: DiceRoll[] | null = null;
+    // Prevent multiple watchers
+    if (watchingStorage) {
+      log.debug('Already watching localStorage');
+      return;
+    }
+
+    // Determine storage keys to watch based on game system
+    const storageKeys =
+      system === GameSystem.UNKNOWN
+        ? [
+            gameConfigs[system].storageKeyPattern.replace('{uuid}', uuid),
+            '{uuid}-dicerolls'.replace('{uuid}', uuid),
+          ]
+        : [gameConfigs[system].storageKeyPattern.replace('{uuid}', uuid)];
+
+    log.debug(`Watching localStorage keys: ${storageKeys.join(', ')} for game system: ${system}`);
+
+    // Initialize lastRolls from localStorage
+    let lastRolls: DiceRoll[] | null = null;
+    let foundInitialData = false;
 
     for (const key of storageKeys) {
       const historyString = localStorage.getItem(key);
       if (historyString) {
         try {
-          currentRolls = JSON.parse(historyString);
+          lastRolls = JSON.parse(historyString);
+          log.debug(`Found initial data in ${key}`);
+          foundInitialData = true;
           break;
         } catch (e) {
-          log.debug(`Error parsing dice history from ${key}:`, e);
+          log.warn(`Error parsing initial dice history from ${key}:`, e);
         }
       }
     }
 
-    if (!currentRolls) {
-      log.debug('No dice history found in any localStorage keys');
-      return;
+    if (!foundInitialData) {
+      log.debug('No initial dice history found in any localStorage keys');
     }
 
-    try {
-      if (
-        !lastRolls ||
-        (currentRolls[0] && JSON.stringify(currentRolls[0]) !== JSON.stringify(lastRolls[0]))
-      ) {
-        const newestRoll = currentRolls[0];
-        if (newestRoll) {
-          log.debug(
-            'Processing roll:',
-            newestRoll.name,
-            'with dice:',
-            newestRoll.dice?.map(d => d.die)?.join(', ') || 'no dice array',
-          );
-          await updateParticipantName();
-          processRoll(newestRoll);
-        }
-        lastRolls = currentRolls;
+    // Define the roll checking function
+    const checkForNewRolls = async () => {
+      if (!dddice?.api) {
+        log.debug('dddice API not available, skipping roll check');
+        return;
       }
-    } catch (e) {
-      log.error('Error processing rolls:', e);
-    }
-  };
 
-  log.debug('Setting up interval for checking new rolls');
-  setInterval(checkForNewRolls, 1000);
-  watchingStorage = true;
-  log.debug('watchingStorage flag set to true');
+      let currentRolls: DiceRoll[] | null = null;
+      let foundKey = '';
 
-  checkForNewRolls();
+      // Try to get rolls from each possible storage key
+      for (const key of storageKeys) {
+        const historyString = localStorage.getItem(key);
+        if (historyString) {
+          try {
+            currentRolls = JSON.parse(historyString);
+            foundKey = key;
+            break;
+          } catch (e) {
+            log.warn(`Error parsing dice history from ${key}:`, e);
+          }
+        }
+      }
+
+      if (!currentRolls) {
+        return;
+      }
+
+      try {
+        // Check if we have a new roll
+        if (
+          !lastRolls ||
+          (currentRolls[0] && JSON.stringify(currentRolls[0]) !== JSON.stringify(lastRolls[0]))
+        ) {
+          const newestRoll = currentRolls[0];
+          if (newestRoll) {
+            log.debug(
+              `New roll detected in ${foundKey}:`,
+              newestRoll.name,
+              'with dice:',
+              newestRoll.dice?.map(d => d.die)?.join(', ') || 'no dice array',
+            );
+
+            // Update participant name before processing roll
+            await updateParticipantName();
+
+            // Process the roll
+            processRoll(newestRoll);
+          }
+          lastRolls = currentRolls;
+        }
+      } catch (e) {
+        log.error('Error processing rolls:', e);
+      }
+    };
+
+    // Set up interval for checking new rolls
+    log.debug('Setting up interval for checking new rolls');
+    const intervalId = setInterval(checkForNewRolls, 1000);
+
+    // Store interval ID for potential cleanup later
+    (window as any).dddiceRollCheckInterval = intervalId;
+
+    // Mark as watching
+    watchingStorage = true;
+    log.debug('watchingStorage flag set to true');
+
+    // Do an initial check
+    await checkForNewRolls();
+
+    return Promise.resolve();
+  } catch (e) {
+    log.error('Error setting up localStorage watch:', e);
+    watchingStorage = false;
+    return Promise.reject(e);
+  }
 }
 
+/**
+ * Send a roll request to the dddice API
+ */
 async function sendRollRequest(
   roll: Array<{
     type: string;
@@ -658,58 +706,51 @@ async function sendRollRequest(
   originalRoll: DiceRoll,
   operator = {},
 ): Promise<void> {
-  const [room, defaultTheme, hopeTheme, fearTheme, plotDieTheme] = await Promise.all([
-    getStorage('room'),
-    getStorage('theme'),
-    getStorage('hopeTheme'),
-    getStorage('fearTheme'),
-    getStorage('plotDieTheme'),
-  ]);
+  try {
+    // Fetch all required theme data in parallel
+    const [room, defaultTheme, hopeTheme, fearTheme, plotDieTheme] = await Promise.all([
+      getStorage('room'),
+      getStorage('theme'),
+      getStorage('hopeTheme'),
+      getStorage('fearTheme'),
+      getStorage('plotDieTheme'),
+    ]);
 
-  if (!dddice?.api) {
-    notify(
-      `dddice extension hasn't been set up yet. Please open the extension pop up via the extensions menu`,
-    );
-    return;
-  }
-
-  if (!room?.slug) {
-    notify(
-      'No dddice room has been selected. Please open the dddice extension pop up and select a room to roll in',
-    );
-    return;
-  }
-
-  if (dddice) {
-    log.debug('Waiting for 3D engine to initialize...');
-    try {
-      await new Promise<void>((resolve, reject) => {
-        let attempts = 0;
-        const maxAttempts = 50;
-        const checkReady = () => {
-          try {
-            dddice.clear();
-            resolve();
-          } catch (e) {
-            if (attempts >= maxAttempts) {
-              reject(new Error('3D engine initialization timeout'));
-            } else {
-              attempts++;
-              setTimeout(checkReady, 100);
-            }
-          }
-        };
-        checkReady();
-      });
-    } catch (e) {
-      log.error('Failed to initialize 3D engine:', e);
-      notify('Failed to initialize 3D engine. Please refresh the page.');
+    // Validate dddice API is available
+    if (!dddice?.api) {
+      notify(
+        `dddice extension hasn't been set up yet. Please open the extension pop up via the extensions menu`,
+      );
       return;
     }
-  }
 
-  try {
-    log.debug('Sending roll:', roll);
+    // Validate room is selected
+    if (!room?.slug) {
+      notify(
+        'No dddice room has been selected. Please open the dddice extension pop up and select a room to roll in',
+      );
+      return;
+    }
+
+    // Wait for 3D engine to be ready if it exists
+    if (dddice) {
+      log.debug('Waiting for 3D engine to initialize...');
+      try {
+        await waitForEngineReady();
+      } catch (e) {
+        log.error('Failed to initialize 3D engine:', e);
+        notify('Failed to initialize 3D engine. Please refresh the page.');
+
+        // Attempt to reinitialize the SDK
+        initializeSDK();
+        return;
+      }
+    }
+
+    // Use the waitForEngineReady function defined outside this function
+
+    // Apply themes to dice based on game system
+    log.debug('Applying themes to dice');
     roll.forEach(die => {
       if (currentGameSystem === GameSystem.DAGGERHEART) {
         if (die.label === 'Hope') {
@@ -728,26 +769,30 @@ async function sendRollRequest(
       log.debug('No theme selected, using default');
     }
 
+    // Get current game system and config
     const { system } = detectGameSystem();
     const config = gameConfigs[system];
 
+    // Handle COSMERERPG special case with plot dice
     if (system === GameSystem.COSMERERPG) {
+      log.debug('Processing COSMERERPG roll');
       const result = config.processDice(originalRoll);
       const baseLabel = config.getRollName(originalRoll);
 
+      // Handle plot die if present
       let plotDie = null;
       if ('plotDice' in result && result.plotDice) {
         plotDie = result.plotDice;
+
         // Apply plot die theme if available
         plotDie.theme = plotDieTheme?.id || defaultTheme?.id;
 
-        // Check if the selected theme supports 'setback' die type by looking at available_dice array
+        // Check if the selected theme supports 'setback' die type
         const themeToCheck = plotDieTheme || defaultTheme;
         if (themeToCheck) {
           // Default to d6 unless we find "setback" in available dice
           plotDie.type = 'd6';
 
-          // Check if theme has the setback die type
           if (themeToCheck.available_dice && Array.isArray(themeToCheck.available_dice)) {
             const hasSetback = themeToCheck.available_dice.some(die => die.id === 'setback');
             if (hasSetback) {
@@ -757,9 +802,13 @@ async function sendRollRequest(
         }
       }
 
+      // Handle split rolls (attack + damage)
       const shouldSplitRoll = originalRoll.results && originalRoll.results.length > 1;
 
       if (shouldSplitRoll) {
+        log.debug('Processing split roll (attack + damage)');
+
+        // Filter attack dice
         const attackDice = roll.filter(
           die =>
             die.groupSlug === 'main-d20-group' ||
@@ -772,30 +821,38 @@ async function sendRollRequest(
           baseLabelText = baseLabelText.substring('Attack Roll:'.length).trim();
         }
 
+        // Send attack roll if we have attack dice
         if (attackDice.length > 0) {
+          log.debug('Sending attack dice:', attackDice);
           await dddice.api.roll.create(attackDice, {
             label: `Attack Roll: ${baseLabelText}`,
             operator,
           });
         }
 
+        // Send damage roll if we have damage dice
         const damageDice = roll.filter(die => die.groupSlug === 'damage-group');
         if (damageDice.length > 0) {
+          log.debug('Sending damage dice:', damageDice);
           await dddice.api.roll.create(damageDice, {
             label: `Damage Roll: ${baseLabelText}`,
             operator,
           });
         }
 
+        // Send plot die if present
         if (plotDie) {
+          log.debug('Sending plot die:', plotDie);
           await dddice.api.roll.create([plotDie], {
             label: `Plot Die: ${baseLabelText}${config.getTypeResult(originalRoll)}`,
           });
         }
       } else {
+        // Handle non-split roll
         if (plotDie) {
-          log.debug('Sending plot die:', plotDie);
-          log.debug('Plot die theme:', plotDie.theme);
+          log.debug('Sending plot die and main dice separately');
+
+          // Send main dice
           const mainDice = roll.filter(die => die.groupSlug !== 'plot-die');
           if (mainDice.length > 0) {
             log.debug('Sending main dice:', mainDice);
@@ -804,96 +861,245 @@ async function sendRollRequest(
               operator,
             });
           }
-          log.debug('originalRoll:', originalRoll);
+
+          // Send plot die
+          log.debug('Sending plot die:', plotDie);
           await dddice.api.roll.create([plotDie], {
             label: `${baseLabel}${config.getTypeResult(originalRoll)}`,
           });
         } else {
+          // Send all dice together
+          log.debug('Sending all dice together:', roll);
           await dddice.api.roll.create(roll, {
             label: `${baseLabel}${config.getTypeResult(originalRoll)}`,
             operator,
           });
         }
       }
-      return;
+    } else {
+      // Handle standard roll for other game systems
+      log.debug('Processing standard roll for game system:', system);
+      const label = config.getRollName(originalRoll) + config.getTypeResult(originalRoll);
+      await dddice.api.roll.create(roll, { label: label, operator });
     }
 
-    const label = config.getRollName(originalRoll) + config.getTypeResult(originalRoll);
-    await dddice.api.roll.create(roll, { label: label, operator });
+    log.debug('Roll sent successfully');
   } catch (e: any) {
     log.error('Roll creation failed:', e);
-    notify(
-      `Failed to create roll: ${e.response?.data?.data?.message ?? e.message ?? 'Unknown error'}`,
-    );
+
+    // Extract the most useful error message
+    const errorMessage = e.response?.data?.data?.message ?? e.message ?? 'Unknown error';
+    notify(`Failed to create roll: ${errorMessage}`);
+
+    // If this appears to be a connection issue, attempt to reconnect
+    if (
+      errorMessage.includes('connect') ||
+      errorMessage.includes('network') ||
+      errorMessage.includes('timeout') ||
+      e.name === 'NetworkError'
+    ) {
+      log.warn('Network error detected, attempting to reconnect');
+      handleConnectionLost();
+    }
   }
 }
 
+/**
+ * Initialize the dddice SDK
+ */
 async function initializeSDK(): Promise<void> {
-  const [apiKey, room, theme, hopeTheme, fearTheme, plotDieTheme, renderMode] = await Promise.all([
-    getStorage('apiKey'),
-    getStorage('room'),
-    getStorage('theme'),
-    getStorage('hopeTheme'),
-    getStorage('fearTheme'),
-    getStorage('plotDieTheme'),
-    getStorage('render mode'),
-  ]);
-
-  if (!apiKey) {
-    log.debug('no api key');
-    return;
-  }
-
-  log.debug('initializeSDK', renderMode);
-  if (dddice) {
-    if (canvasElement) canvasElement.remove();
-    if (dddice.api?.disconnect) dddice.api.disconnect();
-    dddice.stop();
-  }
-
   try {
+    // Reset initialization attempts if this is a fresh initialization
+    if (!dddice) {
+      initializationAttempts = 0;
+    }
+
+    // Increment attempts counter
+    initializationAttempts++;
+
+    // Fetch all required storage values in parallel for efficiency
+    const [apiKey, room, theme, hopeTheme, fearTheme, plotDieTheme, renderMode] = await Promise.all(
+      [
+        getStorage('apiKey'),
+        getStorage('room'),
+        getStorage('theme'),
+        getStorage('hopeTheme'),
+        getStorage('fearTheme'),
+        getStorage('plotDieTheme'),
+        getStorage('render mode'),
+      ],
+    );
+
+    if (!apiKey) {
+      log.debug('No API key available, initialization skipped');
+      return;
+    }
+
+    log.debug(
+      `Initializing dddice SDK (attempt ${initializationAttempts}/${MAX_INITIALIZATION_ATTEMPTS})`,
+      { renderMode },
+    );
+
+    // Clean up existing instance if present
+    if (dddice) {
+      log.debug('Cleaning up existing dddice instance');
+      if (canvasElement) {
+        canvasElement.remove();
+      }
+      if (dddice.api?.disconnect) {
+        dddice.api.disconnect();
+      }
+      dddice.stop();
+    }
+
+    // Clear any existing reconnection timer
+    if (reconnectionTimer) {
+      clearTimeout(reconnectionTimer);
+      reconnectionTimer = null;
+    }
+
+    // Initialize with 3D rendering if enabled
     if (renderMode === undefined || renderMode) {
+      log.debug('Initializing with 3D rendering');
+
+      // Create and configure canvas element
       canvasElement = document.createElement('canvas');
       canvasElement.id = 'dddice-canvas';
       canvasElement.style.cssText =
         'top:0px; position:fixed; pointer-events:none; z-index:100000; opacity:100; height:100vh; width:100vw;';
       document.body.appendChild(canvasElement);
 
+      // Initialize ThreeDDice with canvas
       dddice = new ThreeDDice().initialize(canvasElement, apiKey, undefined, 'Demiplane');
+
+      // Set up event handlers
       dddice.on(ThreeDDiceRollEvent.RollFinished, (roll: IRoll) => notifyRollFinished(roll));
+
+      // Start the 3D engine
       dddice.start();
+
+      // Connect to room if available
       if (room?.slug) {
         dddice.connect(room.slug);
       }
     } else {
+      // Initialize without 3D rendering (API only)
+      log.debug('Initializing API-only mode (no 3D rendering)');
       dddice = new ThreeDDice();
       dddice.api = new ThreeDDiceAPI(apiKey, 'Demiplane');
+
+      // Connect to room if available
       if (room?.slug) {
         dddice.api.connect(room.slug);
       }
+
+      // Set up event handlers for API mode
       dddice.api?.listen(ThreeDDiceRollEvent.RollCreated, (roll: IRoll) =>
         setTimeout(() => notifyRollCreated(roll), 1500),
       );
     }
-    if (theme) preloadTheme(theme);
 
-    if (currentGameSystem === GameSystem.COSMERERPG) {
-      if (plotDieTheme) preloadTheme(plotDieTheme);
+    // Preload themes based on game system
+    await preloadAllThemes(theme, hopeTheme, fearTheme, plotDieTheme);
+
+    // Mark as initialized and store state
+    isInitialized = true;
+    initializationAttempts = 0; // Reset counter on successful initialization
+    setStorage({ demiplane_initialized: true });
+
+    // Set up connection monitoring using the API's built-in events
+    setupConnectionMonitoring();
+
+    // Start watching localStorage for dice rolls
+    log.debug('Starting localStorage watch from initializeSDK');
+    await watchLocalStorage();
+
+    log.debug('dddice SDK initialization completed successfully');
+  } catch (e: any) {
+    // Handle initialization failure
+    log.error('Failed to initialize dddice SDK:', e);
+
+    const errorMessage = e.response?.data?.data?.message ?? e.message ?? 'Unknown error';
+    notify(`Failed to initialize dddice: ${errorMessage}`);
+
+    // Attempt to retry initialization if under max attempts
+    if (initializationAttempts < MAX_INITIALIZATION_ATTEMPTS) {
+      log.debug(
+        `Retrying initialization (attempt ${initializationAttempts}/${MAX_INITIALIZATION_ATTEMPTS})`,
+      );
+      reconnectionTimer = setTimeout(() => {
+        initializeSDK();
+      }, 2000 * initializationAttempts); // Exponential backoff
+    } else {
+      log.error(`Failed to initialize after ${MAX_INITIALIZATION_ATTEMPTS} attempts`);
+      notify('Failed to initialize dddice after multiple attempts. Please refresh the page.');
+    }
+  }
+}
+
+/**
+ * Handle connection loss events
+ */
+function handleConnectionLost() {
+  log.warn('dddice connection lost, attempting to reconnect');
+  notify('dddice connection lost, attempting to reconnect...');
+
+  // Attempt to reconnect after a short delay
+  if (!reconnectionTimer) {
+    reconnectionTimer = setTimeout(() => {
+      initializeSDK();
+    }, 2000);
+  }
+}
+
+/**
+ * Set up connection monitoring using the API's built-in events
+ */
+function setupConnectionMonitoring() {
+  if (!dddice?.api) return;
+
+  // Use the API's connection state change handler
+  dddice.api.onConnectionStateChange((state: string) => {
+    log.debug(`Connection state changed: ${state}`);
+    if (state === 'disconnected' || state === 'failed') {
+      handleConnectionLost();
+    }
+  });
+
+  // Also handle connection errors
+  dddice.api.onConnectionError((error: string) => {
+    log.error(`Connection error: ${error}`);
+    handleConnectionLost();
+  });
+}
+
+/**
+ * Preload all required themes based on game system
+ */
+async function preloadAllThemes(
+  defaultTheme?: ITheme,
+  hopeTheme?: ITheme,
+  fearTheme?: ITheme,
+  plotDieTheme?: ITheme,
+): Promise<void> {
+  try {
+    // Preload default theme first
+    if (defaultTheme) {
+      await preloadTheme(defaultTheme);
+    }
+
+    // Preload game-specific themes
+    if (currentGameSystem === GameSystem.COSMERERPG && plotDieTheme) {
+      await preloadTheme(plotDieTheme);
     }
 
     if (currentGameSystem === GameSystem.DAGGERHEART) {
-      if (hopeTheme) preloadTheme(hopeTheme);
-      if (fearTheme) preloadTheme(fearTheme);
+      if (hopeTheme) await preloadTheme(hopeTheme);
+      if (fearTheme) await preloadTheme(fearTheme);
     }
-
-    isInitialized = true;
-    setStorage({ demiplane_initialized: true });
-
-    log.debug('Starting localStorage watch from initializeSDK');
-    watchLocalStorage();
-  } catch (e: any) {
-    log.debug(e);
-    notify(`${e.response?.data?.data?.message ?? e}`);
+  } catch (e) {
+    log.warn('Error preloading themes:', e);
+    // Continue execution even if theme preloading fails
   }
 }
 
@@ -915,6 +1121,43 @@ function generateNotificationMessage(roll: IRoll) {
   }`;
 }
 
+/**
+ * Helper function to wait for the 3D engine to be ready
+ */
+async function waitForEngineReady(): Promise<void> {
+  return new Promise<void>((resolve, reject) => {
+    let attempts = 0;
+    const maxAttempts = 50;
+    const checkInterval = 100; // ms
+
+    const checkReady = () => {
+      try {
+        if (!dddice) {
+          reject(new Error('dddice instance is not available'));
+          return;
+        }
+
+        dddice.clear();
+        resolve();
+      } catch (e) {
+        if (attempts >= maxAttempts) {
+          reject(
+            new Error(`3D engine initialization timeout after ${maxAttempts * checkInterval}ms`),
+          );
+        } else {
+          attempts++;
+          setTimeout(checkReady, checkInterval);
+        }
+      }
+    };
+
+    checkReady();
+  });
+}
+
+/**
+ * Preload a theme
+ */
 async function preloadTheme(theme: ITheme): Promise<void> {
   if (!theme || !dddice) {
     log.debug('Cannot preload theme: missing theme or dddice instance');
@@ -922,13 +1165,15 @@ async function preloadTheme(theme: ITheme): Promise<void> {
   }
 
   try {
-    log.debug('Preloading theme:', theme);
+    log.debug('Preloading theme:', theme.name || theme.id);
     dddice.loadTheme(theme, true);
-    dddice.loadThemeResources(theme.id, true);
+    await dddice.loadThemeResources(theme.id, true);
+    log.debug(`Theme ${theme.name || theme.id} preloaded successfully`);
     return Promise.resolve();
   } catch (e) {
-    log.debug('Error preloading theme:', e);
-    return Promise.reject(e);
+    log.warn(`Error preloading theme ${theme.name || theme.id}:`, e);
+    // Don't reject the promise, as we want to continue even if one theme fails
+    return Promise.resolve();
   }
 }
 
@@ -969,69 +1214,161 @@ async function updateParticipantName() {
   }
 }
 
+/**
+ * Initialize the extension
+ */
 async function init() {
-  const { system, uuid } = detectGameSystem();
-  currentGameSystem = system;
+  try {
+    // Detect game system and character UUID
+    const { system, uuid } = detectGameSystem();
+    currentGameSystem = system;
 
-  if (!uuid) {
-    log.debug('uninit: not on a character sheet page');
-    const currentCanvas = document.getElementById('dddice-canvas');
-    if (currentCanvas) {
-      currentCanvas.remove();
-      dddice = undefined as unknown as ThreeDDice;
-    }
-    return;
-  }
-
-  log.debug(`init: on ${system} character sheet page`);
-
-  if (!isInitialized && !dddice?.api) {
-    const initialized = await getStorage('demiplane_initialized');
-    const apiKey = await getStorage('apiKey');
-
-    log.debug('Checking initialization state:', { initialized, apiKeyExists: !!apiKey });
-
-    if (apiKey) {
-      await initializeSDK();
-    }
-  } else {
-    log.debug('Already initialized, updating state if needed');
-    if (!watchingStorage) {
-      log.debug('Starting localStorage watch for dice rolls');
-      watchLocalStorage();
+    // Handle case when not on a character sheet page
+    if (!uuid) {
+      log.debug('Not on a character sheet page, cleaning up resources');
+      cleanup();
+      return;
     }
 
-    if (dddice?.canvas) dddice.resize(window.innerWidth, window.innerHeight);
+    log.debug(`Initializing on ${system} character sheet page with UUID: ${uuid}`);
+
+    // Check if we need to initialize the SDK
+    if (!isInitialized || !dddice?.api) {
+      const initialized = await getStorage('demiplane_initialized');
+      const apiKey = await getStorage('apiKey');
+
+      log.debug('Checking initialization state:', {
+        initialized,
+        apiKeyExists: !!apiKey,
+        isInitialized,
+        hasDddiceApi: !!dddice?.api,
+      });
+
+      if (apiKey) {
+        log.debug('API key found, initializing SDK');
+        await initializeSDK();
+      } else {
+        log.debug('No API key found, skipping initialization');
+      }
+    } else {
+      log.debug('Already initialized, updating state if needed');
+
+      // Ensure localStorage watching is active
+      if (!watchingStorage) {
+        log.debug('Starting localStorage watch for dice rolls');
+        await watchLocalStorage();
+      }
+
+      // Resize canvas if needed
+      if (dddice?.canvas) {
+        log.debug('Resizing canvas to match window dimensions');
+        dddice.resize(window.innerWidth, window.innerHeight);
+      }
+    }
+  } catch (e) {
+    log.error('Error during initialization:', e);
+    notify('Error initializing dddice. Please refresh the page.');
   }
 }
 
+/**
+ * Clean up resources when leaving a character sheet page
+ */
+function cleanup() {
+  // Remove canvas element if it exists
+  const currentCanvas = document.getElementById('dddice-canvas');
+  if (currentCanvas) {
+    currentCanvas.remove();
+  }
+
+  // Clear any existing intervals
+  if ((window as any).dddiceRollCheckInterval) {
+    clearInterval((window as any).dddiceRollCheckInterval);
+    (window as any).dddiceRollCheckInterval = null;
+  }
+
+  // No need to clean up connection monitoring as it's handled by the API
+
+  // Clear reconnection timer
+  if (reconnectionTimer) {
+    clearTimeout(reconnectionTimer);
+    reconnectionTimer = null;
+  }
+
+  // Reset state variables
+  dddice = undefined as unknown as ThreeDDice;
+  isInitialized = false;
+  watchingStorage = false;
+  initializationAttempts = 0;
+
+  log.debug('Resources cleaned up');
+}
+
+// Clear dice on click, but only if not currently throwing dice
 document.addEventListener('click', () => {
-  if (dddice && !dddice?.isDiceThrowing) dddice.clear();
+  if (dddice && !dddice?.isDiceThrowing) {
+    try {
+      dddice.clear();
+    } catch (e) {
+      log.warn('Error clearing dice:', e);
+    }
+  }
 });
 
+// Handle extension messages
 chrome.runtime.onMessage.addListener(function (message) {
+  log.debug('Received message:', message.type);
+
   switch (message.type) {
     case 'reloadDiceEngine':
+      log.debug('Reloading dice engine');
+      // Reset state before reinitializing
+      isInitialized = false;
+      watchingStorage = false;
       initializeSDK();
       init();
       break;
+
     case 'preloadTheme':
+      log.debug('Preloading theme:', message.theme?.name || message.theme?.id);
       preloadTheme(message.theme);
+      break;
+
+    case 'connectionLost':
+      log.debug('Connection lost, attempting to reconnect');
+      handleConnectionLost();
       break;
   }
 });
 
-window.addEventListener('load', () => init());
-window.addEventListener('resize', () => init());
+// Initialize on page load
+window.addEventListener('load', () => {
+  log.debug('Page loaded, initializing');
+  init();
+});
 
+// Resize canvas when window size changes
+window.addEventListener('resize', () => {
+  if (dddice?.canvas) {
+    log.debug('Window resized, updating canvas dimensions');
+    dddice.resize(window.innerWidth, window.innerHeight);
+  }
+});
+
+// Initialize on script load
+log.debug('Script loaded, starting initialization');
 init();
 
+// Watch for URL changes to reinitialize when navigating
 let lastUrl = window.location.href;
 new MutationObserver(() => {
   const currentUrl = window.location.href;
   if (currentUrl !== lastUrl) {
     lastUrl = currentUrl;
     log.debug('URL changed, reinitializing extension');
+    // Reset state before reinitializing
+    isInitialized = false;
+    watchingStorage = false;
     init();
   }
 }).observe(document, { subtree: true, childList: true });
