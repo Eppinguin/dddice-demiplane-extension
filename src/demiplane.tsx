@@ -33,31 +33,23 @@ interface GameConfig {
   storageKeyPattern: string;
   getRollName: (roll: DiceRoll) => string;
   getTypeResult: (roll: DiceRoll) => string;
-  processDice: (roll: DiceRoll) =>
-    | Array<{
-        type: string;
-        value: number;
-        theme: string | undefined;
-        label?: string;
-        groupSlug?: string;
-      }>
-    | {
-        dice: Array<{
-          type: string;
-          value: number;
-          theme: string | undefined;
-          label?: string;
-          groupSlug?: string;
-        }>;
-        operator: object;
-        plotDice?: {
-          type: string;
-          value: number;
-          theme: string | undefined;
-          label?: string;
-          groupSlug?: string;
-        };
-      };
+  processDice: (roll: DiceRoll) => {
+    dice: Array<{
+      type: string;
+      value: number;
+      theme: string | undefined;
+      label?: string;
+      groupSlug?: string;
+    }>;
+    operator: object;
+    plotDice?: {
+      type: string;
+      value: number;
+      theme: string | undefined;
+      label?: string;
+      groupSlug?: string;
+    };
+  };
   getCharacterNameSelector?: string;
 }
 
@@ -175,6 +167,7 @@ const baseConfig: GameConfig = {
   getTypeResult: () => '',
   processDice: roll => {
     const diceArray = [];
+    const negativeIndices: number[] = [];
 
     if (roll?.result?.raw_dice?.parts) {
       let lastOperator = '+';
@@ -183,12 +176,17 @@ const baseConfig: GameConfig = {
         if (part.type === 'dice') {
           for (const die of part.dice) {
             if (die.type === 'single_dice') {
+              const dieIndex = diceArray.length;
               diceArray.push({
                 type: `d${die.size}`,
                 value: die.value,
                 theme: undefined,
                 label: `${part.num_dice}d${die.size}`,
               });
+
+              if (lastOperator === '-') {
+                negativeIndices.push(dieIndex);
+              }
             }
           }
         } else if (part.type === 'operator' && typeof part.value === 'string' && part.value) {
@@ -204,11 +202,23 @@ const baseConfig: GameConfig = {
     } else if (roll?.result?.dice) {
       roll.result.dice.forEach(die => {
         log.debug('Processing die:', die);
-        diceArray.push({
-          type: die.value > 0 ? die.die : 'mod',
-          value: die.value,
-          theme: undefined,
-        });
+        const dieIndex = diceArray.length;
+
+        if (die.value < 0 && die.die !== 'mod') {
+          // Handle negative dice using operator instead of converting to mod
+          diceArray.push({
+            type: die.die,
+            value: Math.abs(die.value),
+            theme: undefined,
+          });
+          negativeIndices.push(dieIndex);
+        } else {
+          diceArray.push({
+            type: die.value > 0 ? die.die : 'mod',
+            value: die.value,
+            theme: undefined,
+          });
+        }
       });
 
       if (roll.modifiersParsed && Array.isArray(roll.modifiersParsed)) {
@@ -224,7 +234,8 @@ const baseConfig: GameConfig = {
       }
     }
 
-    return diceArray;
+    const operator = negativeIndices.length > 0 ? { '*': { '-1': negativeIndices } } : {};
+    return { dice: diceArray, operator, plotDice: undefined };
   },
 };
 
@@ -245,7 +256,7 @@ const gameConfigs: Record<GameSystem, GameConfig> = {
   },
   [GameSystem.DAGGERHEART]: {
     ...baseConfig,
-    pathRegex: /^\/nexus\/daggerheart\/character-sheet\/([^/]+)/,
+    pathRegex: /^\/nexus\/daggerheart\/(character-sheet|npc-sheet)\/([^/]+)/,
     getRollName: roll => {
       log.debug('Roll:', roll);
       if (Array.isArray(roll.modifiersParsed)) {
@@ -274,17 +285,30 @@ const gameConfigs: Record<GameSystem, GameConfig> = {
     },
     processDice: roll => {
       const diceArray = [];
+      const negativeIndices: number[] = [];
 
       roll.result.dice.forEach(die => {
         const label = die.config.name;
         log.debug('Processing die:', die);
+        const dieIndex = diceArray.length;
 
-        diceArray.push({
-          type: die.value > 0 ? die.die : 'mod',
-          value: die.value,
-          theme: undefined,
-          label,
-        });
+        if (die.value < 0 && die.die !== 'mod') {
+          // Handle negative dice using operator instead of converting to mod
+          diceArray.push({
+            type: die.die,
+            value: Math.abs(die.value),
+            theme: undefined,
+            label,
+          });
+          negativeIndices.push(dieIndex);
+        } else {
+          diceArray.push({
+            type: die.value > 0 ? die.die : 'mod',
+            value: die.value,
+            theme: undefined,
+            label,
+          });
+        }
       });
 
       if (roll.modifiersParsed) {
@@ -313,7 +337,8 @@ const gameConfigs: Record<GameSystem, GameConfig> = {
         }
       }
 
-      return diceArray;
+      const operator = negativeIndices.length > 0 ? { '*': { '-1': negativeIndices } } : {};
+      return { dice: diceArray, operator, plotDice: undefined };
     },
     getCharacterNameSelector: '.character-name',
   },
@@ -369,6 +394,7 @@ const gameConfigs: Record<GameSystem, GameConfig> = {
     },
     processDice: roll => {
       const diceArray = [];
+      const negativeIndices: number[] = [];
       let operator = {};
       let plotDice = null;
 
@@ -398,13 +424,27 @@ const gameConfigs: Record<GameSystem, GameConfig> = {
                 groupSlug: 'plot-die',
               };
             } else {
-              diceArray.push({
-                type: die.value < 0 ? 'mod' : die.die,
-                value: die.value,
-                theme: undefined,
-                label: label,
-                groupSlug: groupSlug,
-              });
+              const dieIndex = diceArray.length;
+
+              if (die.value < 0 && die.die !== 'mod') {
+                // Handle negative dice using operator instead of converting to mod
+                diceArray.push({
+                  type: die.die,
+                  value: Math.abs(die.value),
+                  theme: undefined,
+                  label: label,
+                  groupSlug: groupSlug,
+                });
+                negativeIndices.push(dieIndex);
+              } else {
+                diceArray.push({
+                  type: die.value < 0 ? 'mod' : die.die,
+                  value: die.value,
+                  theme: undefined,
+                  label: label,
+                  groupSlug: groupSlug,
+                });
+              }
             }
           });
 
@@ -439,14 +479,32 @@ const gameConfigs: Record<GameSystem, GameConfig> = {
               groupSlug: 'plot-die',
             };
           } else {
-            diceArray.push({
-              type: die.die,
-              value: value,
-              theme: undefined,
-              label: label,
-            });
+            const dieIndex = diceArray.length;
+
+            if (value < 0 && die.die !== 'mod') {
+              // Handle negative dice using operator instead of converting to mod
+              diceArray.push({
+                type: die.die,
+                value: Math.abs(value),
+                theme: undefined,
+                label: label,
+              });
+              negativeIndices.push(dieIndex);
+            } else {
+              diceArray.push({
+                type: die.die,
+                value: value,
+                theme: undefined,
+                label: label,
+              });
+            }
           }
         });
+      }
+
+      // Merge negative indices operator with existing operator (like keep highest/lowest)
+      if (negativeIndices.length > 0) {
+        operator = { ...operator, '*': { '-1': negativeIndices } };
       }
 
       return {
@@ -492,8 +550,8 @@ function processRoll(roll: DiceRoll): void {
   currentGameSystem = system;
 
   const result = gameConfigs[system].processDice(roll);
-  const diceArray = Array.isArray(result) ? result : result.dice;
-  const operator = Array.isArray(result) ? {} : result.operator;
+  const diceArray = result.dice;
+  const operator = result.operator;
 
   log.debug('Prepared dice array for 3D roll:', diceArray);
   log.debug('Prepared operator for 3D roll:', operator);
@@ -678,7 +736,7 @@ async function sendRollRequest(
       const baseLabel = config.getRollName(originalRoll);
 
       let plotDie = null;
-      if (!Array.isArray(result) && result.plotDice) {
+      if ('plotDice' in result && result.plotDice) {
         plotDie = result.plotDice;
         // Apply plot die theme if available
         plotDie.theme = plotDieTheme?.id || defaultTheme?.id;
